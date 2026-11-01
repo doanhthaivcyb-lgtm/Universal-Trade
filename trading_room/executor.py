@@ -68,6 +68,17 @@ class MT5Executor:
             tick = mt5.symbol_info_tick(symbol)
             if tick is None:
                 return OrderResult(False, None, f"Không đọc được tick {symbol}.", "mt5")
+            # Giá realtime lúc đặt lệnh: nếu giá đã chạy quá xa so với lúc AI
+            # thảo luận thì SL/TP đã cũ, hủy lệnh thay vì đuổi theo giá.
+            fresh_price = (float(tick.bid) + float(tick.ask)) / 2
+            if abs(fresh_price - snapshot.price) > self.cfg.risk.max_price_move_usd:
+                return OrderResult(
+                    False, None,
+                    f"Giá đã chạy {abs(fresh_price - snapshot.price):.2f} USD khỏi giá lúc thảo luận "
+                    f"({snapshot.price:.2f} -> {fresh_price:.2f}), vượt giới hạn "
+                    f"{self.cfg.risk.max_price_move_usd} USD. Hủy lệnh.",
+                    "mt5",
+                )
 
             order_type = mt5.ORDER_TYPE_BUY if chief.direction == "BUY" else mt5.ORDER_TYPE_SELL
             price = tick.ask if chief.direction == "BUY" else tick.bid

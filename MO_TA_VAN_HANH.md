@@ -81,12 +81,18 @@ trả lời ổn định và ngắn gọn, đúng dạng JSON.
 
 ## 4. Cách vận hành từng bước
 
-### Bước 0 — Chuẩn bị snapshot (đầu vào duy nhất)
+### Bước 0 — Lấy dữ liệu realtime trực tiếp từ MT5 (đầu vào duy nhất)
 
-- Người chạy cung cấp một snapshot tại thời điểm chạy: giá bid/ask, chỉ báo,
-  tin vĩ mô, số vị thế đang mở, lỗ trong ngày, số dư. Xem chi tiết ở mục 6.
-- Mọi AI trong cùng một phiên đều đọc đúng snapshot này, nên không có chuyện
+"Snapshot" ở đây **không phải ảnh chụp màn hình**. Nó là một bản ghi dữ liệu
+thị trường tại một thời điểm, được tạo mới trực tiếp từ terminal MT5 ngay
+trước mỗi phiên (xem mục 6 và `trading_room/mt5_data.py`): tick bid/ask mới
+nhất, nến gần nhất, chỉ báo tính từ nến đó, số vị thế đang mở, lỗ trong ngày
+và số dư tài khoản.
+
+- Không nhập tay giá, không đọc file JSON thủ công khi chạy thật.
+- Mọi AI trong cùng một phiên đều đọc đúng bản ghi này, nên không có chuyện
   AI này thấy giá khác AI kia.
+- File JSON (`data/snapshot_example.json`) chỉ còn để chạy thử khi không có MT5.
 
 ### Bước 1 — Vòng 1: phân tích độc lập
 
@@ -141,9 +147,10 @@ trả lời ổn định và ngắn gọn, đúng dạng JSON.
 - Hàm `save_session()` trong `journal.py` lưu 2 file cho mỗi phiên vào `output/`:
   `session_<YYYYMMDD_HHMMSS>.json` (đầy đủ, kể cả câu trả lời thô của từng AI)
   và `session_<...>.md` (bản đọc nhanh cho người).
-- Phiên v1 chạy **1 lần rồi dừng** (`python main.py ...`). Không tự chạy vòng lặp
-  liên tục. Muốn chạy theo chu kỳ thì người chạy tự hẹn giờ gọi lại lệnh này,
-  mỗi lần gọi là một snapshot mới.
+- Mặc định chạy **1 phiên rồi dừng** (`python main.py`). Dùng `python main.py --loop`
+  để chạy lặp lại theo `loop_interval_seconds` trong `config.yaml` (mặc định
+  900 giây = M15); mỗi vòng lặp lấy lại dữ liệu MT5 mới hoàn toàn, không dùng
+  lại giá của phiên trước. Dừng bằng Ctrl+C hoặc tạo file `STOP`.
 
 ---
 
@@ -170,29 +177,67 @@ trả lời ổn định và ngắn gọn, đúng dạng JSON.
 
 ---
 
-## 6. Nguồn dữ liệu: snapshot thị trường
+## 6. Nguồn dữ liệu: kết nối trực tiếp MT5 realtime
 
-Snapshot là một file JSON, ví dụ `data/snapshot_example.json`, gồm:
+### 6.1. "Snapshot" nghĩa là gì — và không phải là gì
 
-| Trường | Ý nghĩa | Bắt buộc |
-|---|---|---|
-| `symbol` | Mã trên MT5, ví dụ `XAUUSD` (phải khớp đúng tên có hậu tố như `XAUUSD.vx` nếu broker dùng hậu tố) | Có |
-| `timeframe` | Khung phân tích, ví dụ `M15` | Có |
-| `bid`, `ask` | Giá mua/bán tại thời điểm chạy | Có |
-| `indicators` | RSI, MACD, ATR, EMA, hỗ trợ/kháng cự | Có (ít nhất các chỉ báo AI cần) |
-| `macro_news` | Tóm tắt tin/lịch tin do người chạy điền, ghi rõ tin đã có hay sắp tới | Không, mặc định rỗng |
-| `open_positions` | Số vị thế đang mở trên tài khoản | Có |
-| `daily_loss_usd` | Lỗ đã ghi nhận trong ngày (USD, số dương nghĩa là đang lỗ) | Có |
-| `account_balance` | Số dư tài khoản | Không |
-| `notes` | Ghi chú thêm của người chạy | Không |
+Snapshot **không phải ảnh chụp màn hình**, AI cũng không nhìn màn hình MT5.
+Snapshot là một bản ghi dữ liệu (object `MarketSnapshot`) được tạo ra trong
+code tại thời điểm bắt đầu phiên, gồm các trường dưới đây. Bản ghi này là
+thứ duy nhất các AI được đọc.
 
-Hạn chế hiện tại của v1, nói thẳng:
+### 6.2. Cách lấy realtime từ MT5
 
-- v1 **không tự lấy giá live** từ MT5 hay API giá. Người chạy phải điền snapshot
-  đúng tại thời điểm chạy, hoặc viết thêm bước lấy nến MT5 rồi tính chỉ báo bằng
-  các hàm `ema()` / `rsi()` đã có sẵn trong `market_snapshot.py`.
-- File ví dụ `data/snapshot_example.json` dùng số liệu minh họa, **không phải
-  giá thật**, chỉ để chạy thử chế độ `--mock`.
+`trading_room/mt5_data.py`, lớp `MT5DataProvider`:
+
+1. Kết nối tới terminal MT5 đang chạy trên cùng máy Windows bằng thư viện
+   `MetaTrader5` (Python). Nếu đã đăng nhập sẵn trong terminal thì không cần
+   điền login; nếu chưa thì điền `MT5_LOGIN`, `MT5_PASSWORD`, `MT5_SERVER`
+   trong `.env`.
+2. Chọn đúng symbol trong `config.yaml` (phải khớp đúng tên trên MT5, ví dụ
+   `XAUUSD.vx` ở Valetax) bằng `symbol_select()`.
+3. Lấy tick mới nhất bằng `symbol_info_tick()` → `bid`, `ask`, spread.
+4. Lấy 200 nến gần nhất của khung trong config bằng `copy_rates_from_pos()`,
+   rồi tính chỉ báo trong code: RSI14, ATR14, EMA20, EMA50, MACD(12,26,9),
+   hỗ trợ/kháng cự là đỉnh/đáy cao nhất/thấp nhất 100 nến và 20 nến gần nhất.
+5. Lấy vị thế đang mở bằng `positions_get()`, số dư bằng `account_info()`,
+   lỗ trong ngày bằng `history_deals_get()` từ 0 giờ hôm nay (lỗ đã chốt +
+   lỗ đang nổi; trả về số dương khi đang lỗ, 0 khi đang lãi).
+6. Ghi lại `source="mt5"` và `captured_at` (thời điểm lấy dữ liệu) vào bản ghi,
+   để nhật ký cho thấy dữ liệu cũ hay mới.
+
+Mỗi phiên trong chế độ `--loop` đều gọi lại bước này từ đầu, nên không bao
+giờ dùng lại giá cũ.
+
+### 6.3. Các trường của bản ghi dữ liệu
+
+| Trường | Lấy từ đâu (chế độ MT5) |
+|---|---|
+| `symbol`, `timeframe` | `config.yaml` |
+| `bid`, `ask` | Tick realtime `symbol_info_tick()` |
+| `indicators` | Tính từ nến MT5: RSI, MACD, ATR, EMA, hỗ trợ/kháng cự |
+| `macro_news` | `config.yaml` — MT5 không có tin văn bản, điền tay nếu muốn AI vĩ mô đọc |
+| `open_positions` | `positions_get()` trên MT5 |
+| `daily_loss_usd` | `history_deals_get()` hôm nay + lỗ đang nổi |
+| `account_balance` | `account_info()` trên MT5 |
+
+### 6.4. Chế độ JSON chỉ để chạy thử
+
+`data/snapshot_example.json` dùng số liệu minh họa, **không phải giá thật**,
+chỉ để chạy `python main.py --mock --source json`. Khi chạy thật, luôn dùng
+nguồn MT5 mặc định.
+
+### 6.5. Hạn chế, nói thẳng
+
+- Thư viện `MetaTrader5` chỉ chạy trên Windows và cần terminal MT5 đang mở,
+  đã đăng nhập. Trên Linux/Mac, code báo lỗi rõ ràng và không chạy.
+- Dữ liệu là realtime tại thời điểm bắt đầu phiên. Trong lúc AI thảo luận
+  (hàng chục giây), giá có thể chạy. Executor kiểm tra lại tick mới nhất
+  trước khi đặt lệnh và hủy lệnh nếu giá chạy quá `max_price_move_usd`
+  (mặc định 5 USD) so với giá lúc thảo luận — xem mục 8.
+- MT5 không cung cấp tin tức văn bản, lịch kinh tế hay DXY/lợi suất. AI vĩ mô
+  chỉ đọc được `macro_news` điền tay trong config; nếu để trống thì AI đó
+  phải trả về HOLD hoặc phân tích dựa trên giá, không được bịa tin.
 
 ---
 
@@ -244,6 +289,9 @@ Các khóa khác:
   Windows. Trên Linux/Mac, `MT5Executor` tự trả về lỗi rõ ràng và không đặt lệnh.
   Thông tin đăng nhập MT5 (`MT5_LOGIN`, `MT5_PASSWORD`, `MT5_SERVER`) điền
   trong `.env` trên máy chạy.
+- **Kiểm tra giá mới trước khi đặt lệnh:** executor lấy lại tick realtime và hủy
+  lệnh nếu giá chạy quá `max_price_move_usd` (mặc định 5 USD) so với giá lúc
+  AI thảo luận.
 
 ---
 
@@ -253,25 +301,39 @@ Các khóa khác:
 
 Đây là giao diện demo thật sự của v1. Không có giao diện web trong v1.
 
-**Chạy thử không tốn phí API, không đặt lệnh:**
+**Chạy thử không cần MT5, không tốn phí API, không đặt lệnh:**
 
 ```bash
 pip install -r requirements.txt
-python main.py --mock --snapshot data/snapshot_example.json
+python main.py --mock --source json --snapshot data/snapshot_example.json
 ```
 
-**Chạy với key thật (vẫn mặc định `dry_run`, không đặt lệnh thật):**
+**Chạy với dữ liệu realtime từ MT5, AI giả (trên Windows, MT5 đang mở):**
+
+```bash
+python main.py --mock
+```
+
+**Chạy với key AI thật và dữ liệu MT5 thật (vẫn mặc định `dry_run`, không đặt lệnh thật):**
 
 ```bash
 cp .env.example .env   # điền OPENAI_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY
-python main.py --snapshot data/snapshot_example.json
+python main.py
+```
+
+**Chạy lặp lại theo chu kỳ:**
+
+```bash
+python main.py --loop
 ```
 
 **Luồng thao tác demo:**
 
-1. Người chạy chuẩn bị/sửa file snapshot JSON (mục 6).
-2. Gõ lệnh trên. Màn hình in lần lượt: giá và spread, từng ý kiến AI, kết luận
-   trưởng phòng, kết quả cửa rủi ro, và thông báo lệnh (hoặc lý do không vào lệnh).
+1. Mở terminal MT5 trên Windows, đăng nhập tài khoản, để symbol trong config
+   hiện giá. Không cần nhập tay giá hay ảnh chụp màn hình.
+2. Gõ lệnh trên. Màn hình in lần lượt: nguồn dữ liệu và thời điểm lấy dữ liệu,
+   giá và spread, từng ý kiến AI, kết luận trưởng phòng, kết quả cửa rủi ro,
+   và thông báo lệnh (hoặc lý do không vào lệnh).
 3. Mở file nhật ký trong `output/` để đọc toàn bộ cuộc thảo luận (mục 4, bước 6).
 
 **Ví dụ đầu ra trên màn hình (dạng minh họa, số liệu tùy phiên):**
@@ -299,9 +361,9 @@ Bố cục 1 màn hình, chia 4 vùng:
 1. **Vùng trên cùng — Trạng thái phiên:** symbol, khung, giá bid/ask, spread,
    chế độ chạy (`DRY-RUN` / `DEMO` / `LIVE`), nút `Chạy 1 phiên`, nút
    `DỪNG KHẨN CẤP` (tạo file `STOP`), và đồng hồ đếm thời gian gọi AI.
-2. **Vùng trái — Snapshot thị trường:** bảng chỉ báo (RSI, MACD, ATR, EMA,
-   hỗ trợ/kháng cự), ô tin vĩ mô, số vị thế mở, lỗ trong ngày. Có nút
-   `Sửa snapshot` để nhập tay trước khi chạy.
+2. **Vùng trái — Dữ liệu MT5 realtime:** bảng chỉ báo (RSI, MACD, ATR, EMA,
+   hỗ trợ/kháng cự) cập nhật mỗi phiên, ô tin vĩ mô (điền tay trong config),
+   số vị thế mở, lỗ trong ngày, và thời điểm lấy dữ liệu gần nhất.
 3. **Vùng giữa — Phòng thảo luận:** 5 thẻ AI xếp dọc, mỗi thẻ hiện tên, provider,
    hướng, độ tin cậy, lý do ngắn. Bên dưới là khung chat tranh luận vòng 2.
    Khi đang chạy, thẻ nào đang gọi API thì hiện trạng thái "đang phân tích...".
@@ -310,8 +372,8 @@ Bố cục 1 màn hình, chia 4 vùng:
    lot tính ra, nút `Xác nhận đặt lệnh` chỉ hiện khi cửa rủi ro cho phép và
    chế độ không phải `dry_run`. Bên dưới là lịch sử các phiên đã chạy.
 
-Trạng thái hiển thị bắt buộc: đang chờ snapshot, đang gọi AI, đang kiểm tra rủi
-ro, đã xong (vào lệnh / HOLD / bị chặn kèm lý do), và lỗi (mất mạng, hết key,
+Trạng thái hiển thị bắt buộc: đang lấy dữ liệu MT5, đang gọi AI, đang kiểm tra rủi
+ro, đã xong (vào lệnh / HOLD / bị chặn kèm lý do), và lỗi (mất kết nối MT5, mất mạng, hết key,
 JSON lỗi). Không có trạng thái nào tự động đặt lệnh mà không hiện rõ lý do.
 
 ---
@@ -325,8 +387,9 @@ JSON lỗi). Không có trạng thái nào tự động đặt lệnh mà không
 | Phân tích theo vai trò | Prompt riêng cho từng vai trò, bắt buộc trả JSON đúng dạng | `agents.py`: `SYSTEM_PROMPTS`, `run_agent()` |
 | Đọc JSON an toàn | Lấy khối JSON đầu tiên, kiểm tra `direction` hợp lệ, lỗi thì coi là HOLD | `agents.py`: `parse_json_view()`, `view_from_data()` |
 | Điều phối phòng trade | Vòng 1 song song, vòng 2 phản biện, trưởng phòng chốt | `orchestrator.py`: `run_room()`, `build_clients()` |
-| Tính chỉ báo cơ bản | EMA, RSI từ danh sách giá đóng cửa, dùng khi lấy nến MT5 | `market_snapshot.py`: `ema()`, `rsi()` |
-| Đọc snapshot | Đọc file JSON thành `MarketSnapshot`, tính giá giữa và spread | `market_snapshot.py`: `load_snapshot()` |
+| Lấy dữ liệu realtime từ MT5 | Tick, nến, chỉ báo, vị thế, lỗ ngày, số dư trực tiếp từ MT5 | `mt5_data.py`: `MT5DataProvider.build_snapshot()`, `connect()`, `close()` |
+| Tính chỉ báo cơ bản | EMA, RSI, ATR, MACD từ nến MT5 | `market_snapshot.py`: `ema()`, `rsi()`, `atr()`, `macd()` |
+| Đọc file thử | Đọc file JSON thành `MarketSnapshot`, tính giá giữa và spread, chỉ để chạy thử | `market_snapshot.py`: `load_snapshot()` |
 | Cửa rủi ro cứng | 9 kiểm tra theo thứ tự, tính lot | `risk.py`: `check_risk()`, `calculate_lot()` |
 | Đặt lệnh MT5 | Đặt lệnh market có SL/TP/magic, chặn nếu tài khoản không phải demo ở chế độ demo, chặn live nếu thiếu khóa | `executor.py`: `MT5Executor.place()` |
 | Chạy thử không lệnh | Ghi lại lệnh đáng lẽ đặt, không chạm MT5 | `executor.py`: `DryRunExecutor.place()` |
@@ -355,6 +418,7 @@ ai_trading_room/
     config.py
     llm_clients.py
     market_snapshot.py
+    mt5_data.py              # kết nối MT5 realtime, tạo MarketSnapshot
     agents.py
     orchestrator.py
     risk.py
@@ -368,7 +432,7 @@ ai_trading_room/
 
 `config.yaml` (giá trị hiện tại là mặc định chạy thử):
 
-- `symbol: "XAUUSD"`, `timeframe: "M15"`, `mode: "dry_run"`, `allow_live: false`.
+- `symbol: "XAUUSD"`, `timeframe: "M15"`, `data_source: "mt5"`, `mode: "dry_run"`, `allow_live: false`.
 - `providers`: model, temperature, max_tokens cho từng nhà cung cấp.
 - `agents`: agent nào dùng provider nào (bảng ở mục 3).
 - `risk`: mức lỗ tối đa 500 USD/lệnh, lỗ ngày tối đa 2.000 USD, lot tối thiểu
@@ -384,13 +448,13 @@ ai_trading_room/
 
 ## 13. Giới hạn và rủi ro đã biết
 
-1. AI có thể sai, bịa luận điểm, hoặc hiểu sai snapshot. Vì vậy snapshot phải
+1. AI có thể sai, bịa luận điểm, hoặc hiểu sai dữ liệu. Vì vậy dữ liệu MT5 phải
    đúng, cửa rủi ro cứng phải luôn bật, và v1 chỉ nên chạy demo trước.
 2. Gọi 3 nhà cung cấp cùng lúc tốn phí API và mất hàng chục giây mỗi phiên.
    Không phù hợp lướt sóng M1, chỉ phù hợp khung M15/H1 trở lên.
-3. v1 không tự lấy giá live, không theo dõi lệnh sau khi vào, không dời stop,
+3. v1 lấy giá live từ MT5 nhưng không theo dõi lệnh sau khi vào, không dời stop,
    không đóng lệnh sớm, không quản lý lệnh đang mở ngoài việc đếm số vị thế
-   trong snapshot.
+   trong mỗi phiên mới.
 4. Nếu key của một provider hết hạn hoặc lỗi mạng, AI đó trả về lỗi, ý kiến đó
    bị coi là HOLD, và phiên vẫn chạy tiếp với các AI còn lại — nhưng nếu
    trưởng phòng lỗi thì không vào lệnh.
@@ -407,6 +471,4 @@ ai_trading_room/
    `XAUUSD`, nếu broker là Valetax thì có thể phải đổi thành `XAUUSD.vx`).
 3. Mức lỗ tối đa mỗi lệnh và mỗi ngày (hiện tạm 500 USD / 2.000 USD trên vốn
    100.000 USD).
-4. Nguồn snapshot khi chạy thật: nhập tay, hay viết thêm bước tự lấy nến/giá
-   từ MT5.
-5. Có làm giao diện web ở mục 9.2 không, hay chỉ dùng CLI ở mục 9.1.
+4. Có làm giao diện web ở mục 9.2 không, hay chỉ dùng CLI ở mục 9.1.

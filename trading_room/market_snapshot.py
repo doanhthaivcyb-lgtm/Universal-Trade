@@ -5,14 +5,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+# "Snapshot" ở đây KHÔNG phải ảnh chụp màn hình. Nó là một bản ghi dữ liệu
+# thị trường tại một thời điểm: giá bid/ask, chỉ báo, vị thế, lỗ trong ngày.
+# Bản ghi này được tạo mới trực tiếp từ MT5 mỗi phiên (xem mt5_data.py),
+# hoặc đọc từ file JSON chỉ để chạy thử. AI chỉ đọc bản ghi này, không xem ảnh.
 @dataclass
 class MarketSnapshot:
     symbol: str
     timeframe: str
     bid: float
     ask: float
-    # Các chỉ báo do người chạy cung cấp hoặc do MT5 tính. AI không được tự bịa số.
+    # Các chỉ báo do MT5 tính trực tiếp từ nến realtime. AI không được tự bịa số.
     indicators: dict = field(default_factory=dict)
+    source: str = "json"  # "mt5" khi lấy trực tiếp từ MT5, "json" khi đọc file thử
+    captured_at: str = ""
     macro_news: str = ""
     open_positions: int = 0
     daily_loss_usd: float = 0.0
@@ -29,7 +35,8 @@ class MarketSnapshot:
 
     def to_prompt_text(self) -> str:
         return (
-            f"Symbol: {self.symbol}, khung: {self.timeframe}\n"
+            f"Symbol: {self.symbol}, khung: {self.timeframe}, nguồn dữ liệu: {self.source}, "
+            f"thời điểm lấy dữ liệu: {self.captured_at}\n"
             f"Bid: {self.bid}, Ask: {self.ask}, Spread: {self.spread}\n"
             f"Chỉ báo: {json.dumps(self.indicators, ensure_ascii=False)}\n"
             f"Vĩ mô/tin: {self.macro_news}\n"
@@ -80,3 +87,40 @@ def rsi(closes: list[float], period: int = 14) -> float:
         return 100.0
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
+
+
+def _ema_series(values: list[float], period: int) -> list[float]:
+    if not values:
+        return []
+    k = 2 / (period + 1)
+    out = [values[0]]
+    for v in values[1:]:
+        out.append(v * k + out[-1] * (1 - k))
+    return out
+
+
+def atr(highs: list[float], lows: list[float], closes: list[float], period: int = 14) -> float:
+    """Average True Range, tính từ nến MT5."""
+    if len(closes) < 2:
+        return 0.0
+    trs = []
+    for i in range(1, len(closes)):
+        trs.append(max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1])))
+    if not trs:
+        return 0.0
+    return sum(trs[-period:]) / min(period, len(trs))
+
+
+def macd(closes: list[float]) -> dict:
+    """MACD(12,26,9) từ giá đóng cửa. Trả về dict có macd_line/signal/histogram."""
+    if len(closes) < 26:
+        return {"macd_line": 0.0, "signal": 0.0, "histogram": 0.0}
+    ema12 = _ema_series(closes, 12)
+    ema26 = _ema_series(closes, 26)
+    line = [a - b for a, b in zip(ema12, ema26)]
+    signal = _ema_series(line, 9)
+    return {
+        "macd_line": round(line[-1], 4),
+        "signal": round(signal[-1], 4),
+        "histogram": round(line[-1] - signal[-1], 4),
+    }

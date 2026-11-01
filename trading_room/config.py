@@ -32,6 +32,9 @@ class RiskConfig:
     max_sl_distance_usd: float = 30.0
     min_reward_risk: float = 1.0
     max_spread_usd: float = 0.50
+    # Giá được phép chạy khỏi giá lúc lấy dữ liệu trong lúc AI thảo luận.
+    # Vượt quá thì executor hủy lệnh, vì SL/TP của trưởng phòng đã cũ.
+    max_price_move_usd: float = 5.0
     kill_switch_file: str = "STOP"
 
 
@@ -43,6 +46,13 @@ class Config:
     allow_live: bool = False
     magic_number: int = 20261101
     max_open_positions: int = 1
+    # Nguồn dữ liệu chính: "mt5" lấy trực tiếp từ MT5 realtime, "json" chỉ để chạy thử.
+    data_source: str = "mt5"
+    mt5_candles: int = 200
+    # Chu kỳ chạy lại khi dùng --loop, tính bằng giây. Mặc định 900 = 15 phút (M15).
+    loop_interval_seconds: int = 900
+    # MT5 không có tin văn bản. Điền tay tại đây nếu muốn AI vĩ mô đọc tin/lịch tin.
+    macro_news: str = ""
     providers: dict = field(default_factory=dict)
     agents: dict = field(default_factory=dict)
     risk: RiskConfig = field(default_factory=RiskConfig)
@@ -67,6 +77,10 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
         allow_live=bool(data.get("allow_live", False)),
         magic_number=int(data.get("magic_number", 20261101)),
         max_open_positions=int(data.get("max_open_positions", 1)),
+        data_source=str(data.get("data_source", "mt5")),
+        mt5_candles=int(data.get("mt5_candles", 200)),
+        loop_interval_seconds=int(data.get("loop_interval_seconds", 900)),
+        macro_news=str(data.get("macro_news", "")),
         providers=data.get("providers", {}),
         agents=data.get("agents", {}),
         risk=risk,

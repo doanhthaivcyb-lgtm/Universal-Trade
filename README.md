@@ -26,19 +26,28 @@ Mô tả chính xác cách vận hành, giao diện demo và các chức năng c
 - Chế độ live cần cả hai lớp: `allow_live: true` trong `config.yaml` và
   `LIVE_TRADING_ENABLED=true` trong `.env`.
 
-## Chạy thử (không tốn phí API, không đặt lệnh)
+## Dữ liệu realtime từ MT5
+
+Dữ liệu lấy trực tiếp từ terminal MT5 đang chạy trên cùng máy Windows, mỗi
+phiên lấy mới: tick bid/ask, nến, chỉ báo, vị thế mở, lỗ trong ngày, số dư.
+"Snapshot" trong code là bản ghi dữ liệu đó, không phải ảnh chụp màn hình.
+File JSON chỉ để chạy thử khi không có MT5.
+
+## Chạy thử không cần MT5 (không tốn phí API, không đặt lệnh)
 
 ```bash
 pip install -r requirements.txt
-python main.py --mock --snapshot data/snapshot_example.json
+python main.py --mock --source json --snapshot data/snapshot_example.json
 ```
 
-## Chạy với key thật (vẫn mặc định dry_run)
+## Chạy với MT5 realtime và key thật (vẫn mặc định dry_run)
 
 ```bash
 cp .env.example .env
 # điền OPENAI_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY vào .env
-python main.py --snapshot data/snapshot_example.json
+# mở terminal MT5 và đăng nhập trước, rồi chạy:
+python main.py
+# chạy lặp lại theo chu kỳ: python main.py --loop
 ```
 
 Lưu ý: MT5 chỉ chạy trên Windows. File snapshot ví dụ dùng số liệu minh họa,

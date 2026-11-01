@@ -1,0 +1,67 @@
+# Cấu hình phòng trade AI — XAUUSD
+# Mọi key API và mật khẩu MT5 để trong file .env, KHÔNG để trong file này và KHÔNG đẩy lên repo.
+# Các giá trị dưới đây là mặc định an toàn để chạy thử. Thái chốt lại demo/thật,
+# mức lỗ tối đa và khung thời gian rồi sửa ở đây trước khi chạy thật.
+
+symbol: "XAUUSD"
+# Khung chính TẠM để chạy thử, chờ Thái chốt M15 hay H1.
+timeframe: "M15"
+# dry_run: chỉ ghi nhật ký, không đặt lệnh thật dù MT5 có kết nối.
+# demo: chỉ cho phép khi tài khoản MT5 là demo (kiểm tra trong executor).
+# live: CHỈ khi allow_live=true VÀ biến môi trường LIVE_TRADING_ENABLED=true.
+mode: "dry_run"
+allow_live: false
+magic_number: 20261101
+max_open_positions: 1
+
+providers:
+  openai:
+    model: "gpt-4o-mini"
+    temperature: 0.2
+    max_tokens: 800
+  gemini:
+    model: "gemini-2.0-flash"
+    temperature: 0.2
+    max_tokens: 800
+  anthropic:
+    model: "claude-sonnet-4-5"
+    temperature: 0.2
+    max_tokens: 800
+
+# Mỗi agent dùng 1 provider khác nhau để ý kiến độc lập thật sự.
+agents:
+  technical:
+    provider: "openai"
+    role: "technical"
+  macro:
+    provider: "anthropic"
+    role: "macro"
+  sentiment:
+    provider: "gemini"
+    role: "sentiment"
+  contrarian:
+    provider: "openai"
+    role: "contrarian"
+  risk_analyst:
+    provider: "anthropic"
+    role: "risk"
+  chief:
+    provider: "anthropic"
+    role: "chief"
+
+risk:
+  # Mức lỗ tối đa cho 1 lệnh, tính theo USD. TẠM: 500 USD = 0.5% vốn 100.000 USD.
+  max_risk_usd_per_trade: 500.0
+  # Lỗ tối đa trong ngày thì nghỉ. TẠM: 2.000 USD.
+  max_daily_loss_usd: 2000.0
+  max_lot_per_order: 1.5
+  min_lot: 0.01
+  lot_step: 0.01
+  contract_size: 100.0  # 1 lot XAUUSD = 100 oz, 1 USD biến động = 100 USD/lot
+  min_confidence: 0.65
+  min_sl_distance_usd: 3.0
+  max_sl_distance_usd: 30.0
+  min_reward_risk: 1.0
+  max_spread_usd: 0.50
+  # File công tắc dừng khẩn cấp: tạo file STOP trong thư mục dự án là dừng mọi lệnh.
+  kill_switch_file: "STOP"

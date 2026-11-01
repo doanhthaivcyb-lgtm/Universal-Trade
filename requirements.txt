@@ -3,3 +3,6 @@ pyyaml>=6.0
 # MetaTrader5 chỉ cài được trên Windows, và chỉ cần khi chạy executor MT5 thật.
 # Trên Windows: pip install MetaTrader5
 # MetaTrader5
+# App desktop Terminal Pro dùng CustomTkinter (giao diện hiện đại, góc bo tròn).
+# Trên Windows: py -3.13 -m pip install -r requirements.txt
+customtkinter>=5.2.2

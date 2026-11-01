@@ -1,24 +1,23 @@
-"""App desktop Terminal Pro (Tkinter, chỉ dùng thư viện chuẩn) cho phòng trade AI.
+"""App desktop Terminal Pro (CustomTkinter) cho phòng trade AI.
 
-Bản vẽ theo ảnh demo Terminal Pro mà Thái đã chốt (lựa chọn 2): nền navy
-tối, tiêu đề teal nhạt, nút chính xanh dương, dừng khẩn cấp đỏ, Gỡ STOP cam,
-LONG xanh lá, SHORT đỏ, HOLD/CAUTION vàng. Bảng màu nằm ở PALETTE ngay dưới
-đây để Thái tự sửa 1 chỗ là đổi cả app — không sửa màu rải rác từng widget.
+Bản viết lại theo đúng ảnh demo Terminal Pro mà Thái đã chốt (lựa chọn 2):
+góc bo tròn, thẻ nổi, nút lớn, font Segoe UI, bảng màu navy/teal như ảnh.
+Tkinter cổ điển không vẽ được kiểu này (vuông, font mặc định xấu) nên bản
+trước dù sửa bố cục vẫn bị Thái chê xấu; bản này dùng CustomTkinter
+(thư viện giao diện hiện đại xây trên Tkinter, cài thêm 1 dòng pip).
 
-Bố cục 3 tab, thanh tab ở DƯỚI cùng (như ảnh trước), thanh market watch ở
-trên cùng: tab 1 Phòng trade (biểu đồ nến + AI feed + order ticket), tab 2
-Nhật ký & lịch sử, tab 3 Cấu hình & an toàn. Khối quyết định trưởng phòng
-dùng panel tối như các panel khác, KHÔNG dùng nền nâu/vàng nâu.
+Bố cục 3 tab, thanh tab ở DƯỚI cùng, thanh market watch ở trên cùng:
+tab 1 Phòng trade (biểu đồ nến + AI feed + order ticket),
+tab 2 Nhật ký & lịch sử, tab 3 Cấu hình & an toàn.
+Khối quyết định trưởng phòng dùng panel tối viền cyan, KHÔNG nền nâu.
 
 Biểu đồ + market watch chạy theo thời gian thực: luồng LiveFeed hỏi tick MT5
-mỗi 2 giây và nến mới mỗi ~10 giây, cập nhật giá/spread/số dư/equity và nến
-cuối đang chạy. MT5 Python API không tự đẩy giá, nên đây là hỏi theo chu kỳ,
-không phải từng mili giây. Luồng realtime tạm dừng trong lúc 1 phiên AI đang
-chạy (để không tranh kết nối MT5 với phiên), chạy xong tự nối lại.
+mỗi 2 giây và nến mới mỗi ~10 giây. MT5 Python API không tự đẩy giá nên đây
+là hỏi theo chu kỳ, không phải từng mili giây. Luồng realtime tạm dừng trong
+lúc 1 phiên AI đang chạy, chạy xong tự nối lại.
 
-Chạy bằng cách bấm đúp file ``run_app.bat`` ở thư mục gốc của dự án, hoặc:
-    py -3.13 main.py --app
-    py -3.13 -m trading_room.desktop_app
+Cài đặt (Windows, Python 3.13): py -3.13 -m pip install -r requirements.txt
+Chạy: bấm đúp run_app.bat, hoặc py -3.13 main.py --app.
 
 An toàn giống bản web: app không bao giờ hiện giá trị key trong .env, chỉ
 hiện có/không có key; không cho sửa key, không cho đổi sang chế độ live;
@@ -33,9 +32,12 @@ import queue
 import threading
 import time
 import tkinter as tk
+import tkinter.font as tkfont
 from datetime import datetime
 from pathlib import Path
 from tkinter import messagebox
+
+import customtkinter as ctk
 
 from .agents import SYSTEM_PROMPTS
 from .config import load_config
@@ -58,11 +60,13 @@ PALETTE = {
     "muted": "#94A3B8",     # chữ phụ
     "cyan": "#5EEAD4",      # tiêu đề, nhấn teal nhạt
     "blue": "#2563EB",      # nút chính, tab đang chọn
+    "blue_hover": "#1D4ED8",
     "green": "#22C55E",     # BUY / LONG / PASS
     "red": "#EF4444",       # SELL / SHORT / FAIL
     "amber": "#F59E0B",     # HOLD / NEUTRAL / CAUTION
     "orange": "#EA580C",    # nút Gỡ STOP
     "danger": "#DC2626",    # nút dừng khẩn cấp
+    "danger_hover": "#B91C1C",
     "purple": "#A855F7",    # badge Portfolio Manager
     "grey": "#64748B",      # trạng thái chờ / chưa có
 }
@@ -114,6 +118,31 @@ STEPS = [
     "6. Kiểm định rủi ro",
     "7. Sẵn sàng",
 ]
+
+
+# ---------- Font: Segoe UI trên Windows, DejaVu Sans trên Linux ----------
+_FAMILY_CACHE: str | None = None
+
+
+def _font_family() -> str:
+    global _FAMILY_CACHE
+    if _FAMILY_CACHE is not None:
+        return _FAMILY_CACHE
+    try:
+        families = set(tkfont.families())
+    except Exception:
+        families = set()
+    for candidate in ("Segoe UI", "Inter", "Roboto", "DejaVu Sans", "Arial", "Helvetica"):
+        if candidate in families:
+            _FAMILY_CACHE = candidate
+            return candidate
+    _FAMILY_CACHE = ""
+    return ""
+
+
+def F(size: int, bold: bool = False) -> ctk.CTkFont:
+    return ctk.CTkFont(family=_font_family() or None, size=size,
+                       weight="bold" if bold else "normal")
 
 
 def _view_to_dict(view, round_no: int = 0) -> dict:
@@ -336,10 +365,21 @@ class LiveFeed:
         except Exception as exc:
             self.events.put(("live_error", str(exc)))
             return
-        try:
-            provider.connect()
-        except Exception as exc:
-            self.events.put(("live_error", str(exc)))
+        # Thử nối lại mỗi 5 giây thay vì bỏ luôn ở lần đầu thất bại: terminal
+        # MT5 có thể chưa đăng nhập xong lúc app vừa mở (lỗi -6 Authorization
+        # failed thường là lúc đó), sau đó nối được thì dữ liệu vẫn chạy.
+        while not self._stop.is_set():
+            try:
+                provider.connect()
+                self._error_sent = False
+                break
+            except Exception as exc:
+                if not self._error_sent:
+                    self._error_sent = True
+                    self.events.put(("live_error", str(exc)))
+                if self._stop.wait(timeout=5.0):
+                    return
+        if self._stop.is_set():
             return
         count = 0
         while not self._stop.is_set():
@@ -404,6 +444,7 @@ class CandleChart(tk.Canvas):
 
     def __init__(self, master, **kwargs):
         super().__init__(master, bg=PALETTE["bg"], highlightthickness=0, **kwargs)
+        self.font_family = "DejaVu Sans"
         self.candles: list[dict] = []
         self.support: list[float] = []
         self.resistance: list[float] = []
@@ -412,8 +453,10 @@ class CandleChart(tk.Canvas):
 
     def set_candles(self, candles: list[dict], support=None, resistance=None) -> None:
         self.candles = [dict(c) for c in (candles or [])]
-        self.support = list(support or [])
-        self.resistance = list(resistance or [])
+        # Gộp các mức trùng nhau (chỉ báo trả về list có thể lặp) để nhãn
+        # trên biểu đồ không đè lên nhau.
+        self.support = sorted({round(float(v), 2) for v in (support or [])})
+        self.resistance = sorted({round(float(v), 2) for v in (resistance or [])})
         self.draw()
 
     def update_tick(self, bid: float, ask: float) -> None:
@@ -435,7 +478,7 @@ class CandleChart(tk.Canvas):
         if not self.candles:
             self.create_text(width / 2, height / 2, fill=PALETTE["muted"],
                              text="Chưa có nến — bấm “Làm mới MT5” hoặc “Chạy 1 phiên” (nguồn mt5).",
-                             font=("", 10))
+                             font=(self.font_family, 10))
             return
         visible = self.candles[-self.visible:]
         plot_h = height * 0.78
@@ -455,10 +498,14 @@ class CandleChart(tk.Canvas):
         def y_of(price: float) -> float:
             return 8 + (hi - price) / (hi - lo) * (plot_h - 16)
 
-        def x_of(i: int) -> float:
-            return 8 + (i + 0.5) * (width - 16) / len(visible)
+        # Chừa lề phải 64px cho nhãn giá, như ảnh demo; nến không vẽ
+        # đè lên nhãn giá và nhãn giá không bị cắt ở mép phải.
+        plot_right = width - 64
 
-        step = (width - 16) / len(visible)
+        def x_of(i: int) -> float:
+            return 8 + (i + 0.5) * (plot_right - 8) / len(visible)
+
+        step = (plot_right - 8) / len(visible)
         body_w = max(2.0, step * 0.65)
         max_vol = max((c.get("volume", 0.0) or 0.0) for c in visible) or 1.0
         closes = [c["close"] for c in self.candles]
@@ -483,72 +530,86 @@ class CandleChart(tk.Canvas):
             if len(points) >= 4:
                 self.create_line(points, fill=color, width=1)
         for level in self.support:
-            self.create_line(8, y_of(level), width - 8, y_of(level), fill="#3B82F6", dash=(4, 3))
-            self.create_text(width - 10, y_of(level) - 8, text=f"{level:.2f}", fill="#3B82F6",
-                             anchor="e", font=("", 8))
+            self.create_line(8, y_of(level), plot_right, y_of(level), fill="#3B82F6", dash=(4, 3))
+            self.create_text(10, y_of(level) - 8, text=f"SUPPORT {level:.2f}", fill="#3B82F6",
+                             anchor="w", font=(self.font_family, 8))
         for level in self.resistance:
-            self.create_line(8, y_of(level), width - 8, y_of(level), fill=PALETTE["red"], dash=(4, 3))
-            self.create_text(width - 10, y_of(level) - 8, text=f"{level:.2f}", fill=PALETTE["red"],
-                             anchor="e", font=("", 8))
+            self.create_line(8, y_of(level), plot_right, y_of(level), fill=PALETTE["red"], dash=(4, 3))
+            self.create_text(10, y_of(level) - 8, text=f"RESISTANCE {level:.2f}", fill=PALETTE["red"],
+                             anchor="w", font=(self.font_family, 8))
         last_price = visible[-1]["close"]
-        self.create_line(8, y_of(last_price), width - 8, y_of(last_price), fill=PALETTE["cyan"], dash=(2, 2))
-        self.create_text(width - 10, y_of(last_price) + 10, text=f"{last_price:.2f}",
-                         fill=PALETTE["cyan"], anchor="e", font=("", 9, "bold"))
-        self.create_text(10, height - 6, text="VOLUME", fill=PALETTE["muted"], anchor="sw", font=("", 8))
+        self.create_line(8, y_of(last_price), plot_right, y_of(last_price), fill=PALETTE["cyan"], dash=(2, 2))
+        self.create_text(width - 6, y_of(last_price), text=f"{last_price:.2f}",
+                         fill=PALETTE["cyan"], anchor="e", font=(self.font_family, 9, "bold"))
+        # Nhãn VOLUME có nền tối riêng để không bị cột volume đè lên chữ.
+        self.create_rectangle(6, height - 20, 66, height - 3, fill=PALETTE["bg"], outline="")
+        self.create_text(10, height - 6, text="VOLUME", fill=PALETTE["muted"], anchor="sw", font=(self.font_family, 8))
 
 
-# ---------- Widget phụ: cùng bảng màu, dễ sửa ----------
 
-def _panel(parent, **kwargs):
-    frame = tk.Frame(parent, bg=PALETTE["panel"], highlightbackground=PALETTE["border"],
-                     highlightthickness=1, **kwargs)
-    return frame
+# ---------- Widget phụ CustomTkinter: cùng bảng màu, dễ sửa ----------
 
-
-def _label(parent, text: str, size: int = 10, bold: bool = False, color: str | None = None, **kwargs):
-    return tk.Label(parent, text=text, bg=PALETTE["panel"], fg=color or PALETTE["text"],
-                    font=("", size, "bold" if bold else "normal"), **kwargs)
+def _frame(parent, radius: int = 12, color: str | None = None, border: bool = True, **kwargs):
+    return ctk.CTkFrame(parent, corner_radius=radius, fg_color=color or PALETTE["panel"],
+                        border_width=1 if border else 0, border_color=PALETTE["border"], **kwargs)
 
 
-def _title(parent, text: str):
-    return tk.Label(parent, text=text, bg=PALETTE["panel"], fg=PALETTE["cyan"],
-                    font=("", 11, "bold"), anchor="w")
+def _label(parent, text: str = "", size: int = 13, bold: bool = False,
+           color: str | None = None, **kwargs):
+    return ctk.CTkLabel(parent, text=text, font=F(size, bold),
+                        text_color=color or PALETTE["text"], **kwargs)
 
 
-def _button(parent, text: str, command, bg: str | None = None, fg: str | None = None, **kwargs):
-    return tk.Button(parent, text=text, command=command,
-                     bg=bg or PALETTE["panel2"], fg=fg or PALETTE["text"],
-                     activebackground=PALETTE["border"], activeforeground=PALETTE["text"],
-                     relief="flat", bd=1, padx=10, pady=6, cursor="hand2", **kwargs)
+def _button(parent, text: str, command, color: str | None = None, text_color: str = "white",
+            size: int = 14, height: int = 44, **kwargs):
+    bg = color or PALETTE["panel2"]
+    hover = {"#2563EB": PALETTE["blue_hover"], "#DC2626": PALETTE["danger_hover"]}.get(bg, bg)
+    return ctk.CTkButton(parent, text=text, command=command, font=F(size, True),
+                         fg_color=bg, hover_color=hover, text_color=text_color,
+                         corner_radius=10, height=height, **kwargs)
 
 
-def _entry(parent, width: int = 26):
-    return tk.Entry(parent, width=width, bg=PALETTE["panel2"], fg=PALETTE["text"],
-                    insertbackground=PALETTE["text"], relief="flat", highlightbackground=PALETTE["border"],
-                    highlightthickness=1)
+def _entry(parent, width: int = 200, **kwargs):
+    return ctk.CTkEntry(parent, width=width, font=F(13), height=36,
+                        fg_color=PALETTE["panel2"], border_color=PALETTE["border"],
+                        text_color=PALETTE["text"], **kwargs)
 
 
-def _text(parent, height: int = 10):
-    widget = tk.Text(parent, height=height, wrap="word", bg=PALETTE["panel"],
-                     fg=PALETTE["text"], insertbackground=PALETTE["text"],
-                     relief="flat", highlightbackground=PALETTE["border"], highlightthickness=1)
-    return widget
+def _textbox(parent, height: int = 120, **kwargs):
+    return ctk.CTkTextbox(parent, height=height, font=F(13), corner_radius=8,
+                          fg_color=PALETTE["panel"], border_width=1,
+                          border_color=PALETTE["border"], text_color=PALETTE["text"], **kwargs)
 
 
-def _pill(parent, text: str, bg: str):
-    return tk.Label(parent, text=text, bg=bg, fg="#0B1220" if bg in (PALETTE["green"], PALETTE["amber"], PALETTE["cyan"]) else PALETTE["text"],
-                    font=("", 9, "bold"), padx=8, pady=2)
+def _pill(parent, text: str, bg: str, text_color: str | None = None, size: int = 12):
+    return ctk.CTkLabel(parent, text=text, font=F(size, True), fg_color=bg,
+                        text_color=text_color or ("#FFFFFF" if bg in (PALETTE["red"], PALETTE["grey"])
+                                                  else "#0B1220"),
+                        corner_radius=6, padx=8, pady=2)
 
 
-def _set_text(widget: tk.Text, content: str) -> None:
-    widget.config(state="normal")
+def _bar(parent, color: str, height: int = 8):
+    bar = ctk.CTkProgressBar(parent, height=height, progress_color=color,
+                             fg_color=PALETTE["panel2"], corner_radius=4)
+    bar.set(0.0)
+    return bar
+
+
+def _set_bar(bar: ctk.CTkProgressBar, value: float, color: str) -> None:
+    bar.configure(progress_color=color)
+    bar.set(max(0.0, min(1.0, float(value or 0.0))))
+
+
+def _set_text(widget: ctk.CTkTextbox, content: str) -> None:
+    widget.configure(state="normal")
     widget.delete("1.0", "end")
     widget.insert("1.0", content)
-    widget.config(state="disabled")
+    widget.configure(state="disabled")
 
 
-class DesktopApp(tk.Tk):
+class DesktopApp(ctk.CTk):
     def __init__(self, config_path: str = "config.yaml", output_dir: str = "output"):
+        ctk.set_appearance_mode("dark")
         super().__init__()
         self.config_path = config_path
         self.output_dir = output_dir
@@ -556,13 +617,14 @@ class DesktopApp(tk.Tk):
         self.runner = SessionRunner(config_path, output_dir, self.events)
         self.live = LiveFeed(config_path, self.events)
         self.title("AI GOLD TRADING ROOM — TERMINAL PRO")
-        self.geometry("1400x900")
+        self.geometry("1440x920")
         self.minsize(1100, 720)
-        self.configure(bg=PALETTE["bg"])
+        self.configure(fg_color=PALETTE["bg"])
         self._current_views: dict[str, dict] = {}
         self._current_snapshot: dict | None = None
         self._ref_close: float | None = None
         self._last_balance = 0.0
+        self._last_equity = 0.0
         self._build_widgets()
         self._refresh_status()
         self._load_history()
@@ -578,97 +640,89 @@ class DesktopApp(tk.Tk):
             pass
 
     # ---------- Xây giao diện ----------
+    # Lưu ý: CTkLabel không nhận textvariable, nên mọi chữ cập nhật động
+    # đều giữ tham chiếu widget và gọi .configure(text=...) trực tiếp.
     def _build_widgets(self) -> None:
         self.grid_rowconfigure(2, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
         # Hàng 0: tiêu đề app
-        header = tk.Frame(self, bg=PALETTE["bg"])
-        header.grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 2))
-        tk.Label(header, text="◎  AI GOLD TRADING ROOM — TERMINAL PRO", bg=PALETTE["bg"],
-                 fg=PALETTE["cyan"], font=("", 14, "bold")).pack(side="left")
-        tk.Label(header, text="v2.1.3", bg=PALETTE["bg"], fg=PALETTE["muted"],
-                 font=("", 10)).pack(side="left", padx=8)
-        self.mode_var = tk.StringVar(value="DRY-RUN")
-        tk.Label(header, textvariable=self.mode_var, bg=PALETTE["amber"], fg="#0B1220",
-                 font=("", 10, "bold"), padx=8, pady=2).pack(side="right")
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 2))
+        _label(header, "◎  AI GOLD TRADING ROOM — TERMINAL PRO", size=17, bold=True,
+               color=PALETTE["cyan"]).pack(side="left")
+        _label(header, "v2.1.3", size=12, color=PALETTE["muted"]).pack(side="left", padx=8)
+        self.mode_pill = _pill(header, "DRY-RUN", PALETTE["amber"], size=12)
+        self.mode_pill.pack(side="right")
 
-        # Hàng 1: market watch + tiến trình 7 bước
-        bar = _panel(self)
-        bar.grid(row=1, column=0, sticky="ew", padx=10, pady=4)
-        for col, weight in enumerate((1, 2, 1, 1, 1, 1, 2, 3)):
-            bar.grid_columnconfigure(col, weight=weight)
-        tk.Label(bar, text="MARKET WATCH:", bg=PALETTE["panel"], fg=PALETTE["muted"],
-                 font=("", 9, "bold")).grid(row=0, column=0, sticky="w", padx=8, pady=6)
-        self.symbol_var = tk.StringVar(value="XAUUSD")
-        tk.Label(bar, textvariable=self.symbol_var, bg=PALETTE["panel"], fg=PALETTE["text"],
-                 font=("", 12, "bold")).grid(row=1, column=0, sticky="w", padx=8)
-        self.price_var = tk.StringVar(value="—")
-        tk.Label(bar, textvariable=self.price_var, bg=PALETTE["panel"], fg=PALETTE["text"],
-                 font=("", 16, "bold")).grid(row=0, column=1, rowspan=2, sticky="w")
-        self.change_var = tk.StringVar(value="")
-        self.change_lbl = tk.Label(bar, textvariable=self.change_var, bg=PALETTE["panel"],
-                                   fg=PALETTE["green"], font=("", 11, "bold"))
-        self.change_lbl.grid(row=0, column=2, rowspan=2, sticky="w")
-        self.spread_var = tk.StringVar(value="SPREAD: —")
-        tk.Label(bar, textvariable=self.spread_var, bg=PALETTE["panel"], fg=PALETTE["text"],
-                 font=("", 11)).grid(row=0, column=3, rowspan=2, sticky="w")
-        self.bal_var = tk.StringVar(value="BAL: —")
-        tk.Label(bar, textvariable=self.bal_var, bg=PALETTE["panel"], fg=PALETTE["text"],
-                 font=("", 11)).grid(row=0, column=4, rowspan=2, sticky="w")
-        self.eq_var = tk.StringVar(value="EQUITY: —")
-        tk.Label(bar, textvariable=self.eq_var, bg=PALETTE["panel"], fg=PALETTE["green"],
-                 font=("", 11, "bold")).grid(row=0, column=5, rowspan=2, sticky="w")
-        self.mt5_var = tk.StringVar(value="MT5: CHƯA KẾT NỐI")
-        self.mt5_lbl = tk.Label(bar, textvariable=self.mt5_var, bg=PALETTE["panel"],
-                                fg=PALETTE["amber"], font=("", 10, "bold"))
-        self.mt5_lbl.grid(row=0, column=6, rowspan=2, sticky="w")
-        steps_frame = tk.Frame(bar, bg=PALETTE["panel"])
-        steps_frame.grid(row=0, column=7, rowspan=2, sticky="e", padx=8)
-        tk.Label(steps_frame, text="PROGRESS:", bg=PALETTE["panel"], fg=PALETTE["muted"],
-                 font=("", 9, "bold"), anchor="w").pack(fill="x")
-        pills = tk.Frame(steps_frame, bg=PALETTE["panel"])
-        pills.pack(fill="x")
-        self.step_labels: list[tk.Label] = []
+        # Hàng 1: market watch (trên) + tiến trình 7 bước (dưới)
+        bar = _frame(self)
+        bar.grid(row=1, column=0, sticky="ew", padx=12, pady=6)
+        top = ctk.CTkFrame(bar, fg_color="transparent")
+        top.pack(fill="x", padx=10, pady=(8, 2))
+        stack = ctk.CTkFrame(top, fg_color="transparent")
+        stack.pack(side="left")
+        _label(stack, "MARKET WATCH:", size=11, bold=True, color=PALETTE["muted"]).pack(anchor="w")
+        self.symbol_lbl = _label(stack, "XAUUSD", size=14, bold=True)
+        self.symbol_lbl.pack(anchor="w")
+        self.price_lbl = _label(top, "—", size=26, bold=True)
+        self.price_lbl.pack(side="left", padx=12)
+        self.change_lbl = _label(top, "", size=14, bold=True, color=PALETTE["green"])
+        self.change_lbl.pack(side="left", padx=4)
+
+        def _mini_box(caption: str, color: str, bold: bool) -> ctk.CTkLabel:
+            box = _frame(top, radius=8, color=PALETTE["panel2"])
+            box.pack(side="left", padx=4, pady=2)
+            _label(box, caption, size=10, color=PALETTE["muted"]).pack(fill="x", padx=8, pady=(4, 0))
+            value_lbl = _label(box, "—", size=13, bold=bold, color=color)
+            value_lbl.pack(fill="x", padx=8, pady=(0, 4))
+            return value_lbl
+
+        self.spread_lbl = _mini_box("SPREAD:", PALETTE["text"], False)
+        self.bal_lbl = _mini_box("BAL:", PALETTE["text"], False)
+        self.eq_lbl = _mini_box("EQUITY:", PALETTE["green"], True)
+        self.mt5_lbl = _label(top, "MT5: CHƯA KẾT NỐI", size=13, bold=True, color=PALETTE["amber"])
+        self.mt5_lbl.pack(side="left", padx=10)
+
+        prog = ctk.CTkFrame(bar, fg_color="transparent")
+        prog.pack(fill="x", padx=10, pady=(2, 8))
+        _label(prog, "PROGRESS:", size=11, bold=True, color=PALETTE["muted"]).pack(side="left", padx=(0, 8))
+        self.step_labels: list[ctk.CTkLabel] = []
         for label in STEPS:
-            lbl = tk.Label(pills, text=label, bg=PALETTE["panel2"], fg=PALETTE["muted"],
-                           font=("", 8), padx=5, pady=2)
+            lbl = _pill(prog, label, PALETTE["panel2"], text_color=PALETTE["muted"], size=11)
             lbl.pack(side="left", padx=2)
             self.step_labels.append(lbl)
 
-        # Hàng 2: nội dung 3 tab (chỉ hiện 1 tab, đổi bằng thanh tab dưới cùng)
-        self.content = tk.Frame(self, bg=PALETTE["bg"])
-        self.content.grid(row=2, column=0, sticky="nsew", padx=10, pady=4)
+        # Hàng 2: nội dung 3 tab
+        self.content = ctk.CTkFrame(self, fg_color="transparent")
+        self.content.grid(row=2, column=0, sticky="nsew", padx=12, pady=4)
         self.content.grid_rowconfigure(0, weight=1)
         self.content.grid_columnconfigure(0, weight=1)
-        self.tab_frames: dict[str, tk.Frame] = {}
+        self.tab_frames: dict[str, ctk.CTkFrame] = {}
         self._build_tab1()
         self._build_tab2()
         self._build_tab3()
 
-        # Hàng 3: thanh tab ở DƯỚI cùng (như ảnh trước)
-        tabbar = tk.Frame(self, bg=PALETTE["bg"])
+        # Hàng 3: thanh tab ở DƯỚI cùng (như ảnh demo)
+        tabbar = ctk.CTkFrame(self, fg_color="transparent")
         tabbar.grid(row=3, column=0, pady=(2, 0))
-        self.tab_buttons: dict[str, tk.Button] = {}
+        self.tab_buttons: dict[str, ctk.CTkButton] = {}
         for key, label in (("trade", "Phòng trade"), ("history", "Nhật ký & lịch sử"),
                            ("config", "Cấu hình & an toàn")):
-            btn = _button(tabbar, label, lambda k=key: self.show_tab(k))
-            btn.pack(side="left", padx=4, ipadx=10, ipady=4)
+            btn = _button(tabbar, label, lambda k=key: self.show_tab(k), height=40, size=13)
+            btn.pack(side="left", padx=4, ipadx=10)
             self.tab_buttons[key] = btn
         self.show_tab("trade")
 
         # Hàng 4: thanh trạng thái dưới cùng
-        status = tk.Frame(self, bg=PALETTE["bg"])
-        status.grid(row=4, column=0, sticky="ew", padx=10, pady=(4, 8))
-        self.keys_var = tk.StringVar(value="Key: đang kiểm tra...")
-        tk.Label(status, textvariable=self.keys_var, bg=PALETTE["bg"], fg=PALETTE["muted"],
-                 font=("", 9)).pack(side="left")
-        self.clock_var = tk.StringVar(value="")
-        tk.Label(status, textvariable=self.clock_var, bg=PALETTE["bg"], fg=PALETTE["muted"],
-                 font=("", 9)).pack(side="right")
-        self.phase_var = tk.StringVar(value="Chưa chạy phiên nào.")
-        tk.Label(status, textvariable=self.phase_var, bg=PALETTE["bg"], fg=PALETTE["cyan"],
-                 font=("", 9)).pack(side="left", padx=16)
+        status = ctk.CTkFrame(self, fg_color="transparent")
+        status.grid(row=4, column=0, sticky="ew", padx=12, pady=(4, 10))
+        self.keys_lbl = _label(status, "Key: đang kiểm tra...", size=11, color=PALETTE["muted"])
+        self.keys_lbl.pack(side="left")
+        self.clock_lbl = _label(status, "", size=11, color=PALETTE["muted"])
+        self.clock_lbl.pack(side="right")
+        self.phase_lbl = _label(status, "Chưa chạy phiên nào.", size=11, color=PALETTE["cyan"])
+        self.phase_lbl.pack(side="left", padx=16)
 
     def show_tab(self, key: str) -> None:
         for name, frame in self.tab_frames.items():
@@ -676,691 +730,966 @@ class DesktopApp(tk.Tk):
         self.tab_frames[key].grid(row=0, column=0, sticky="nsew")
         for name, btn in self.tab_buttons.items():
             if name == key:
-                btn.config(bg=PALETTE["blue"], fg="white")
+                btn.configure(fg_color=PALETTE["blue"], text_color="white")
             else:
-                btn.config(bg=PALETTE["panel2"], fg=PALETTE["text"])
+                btn.configure(fg_color=PALETTE["panel2"], text_color=PALETTE["text"])
 
-    # ----- Tab 1: Phòng trade -----
+    # ---------- Tab 1: Phòng trade ----------
     def _build_tab1(self) -> None:
-        tab = tk.Frame(self.content, bg=PALETTE["bg"])
-        self.tab_frames["trade"] = tab
+        tab = ctk.CTkFrame(self.content, fg_color="transparent")
         tab.grid_rowconfigure(0, weight=1)
-        tab.grid_rowconfigure(1, weight=0)
-        tab.grid_columnconfigure(0, weight=38)
-        tab.grid_columnconfigure(1, weight=34)
-        tab.grid_columnconfigure(2, weight=28)
+        tab.grid_columnconfigure(0, weight=40)
+        tab.grid_columnconfigure(1, weight=33)
+        tab.grid_columnconfigure(2, weight=27)
+        self.tab_frames["trade"] = tab
 
         # Cột trái: biểu đồ + chỉ báo
-        left = _panel(tab)
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        left = ctk.CTkScrollableFrame(tab, corner_radius=12, fg_color=PALETTE["panel"],
+                                          border_width=1, border_color=PALETTE["border"],
+                                          scrollbar_button_color=PALETTE["panel2"],
+                                          scrollbar_button_hover_color=PALETTE["border"])
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         left.grid_rowconfigure(1, weight=1)
         left.grid_columnconfigure(0, weight=1)
-        self.chart_title_var = tk.StringVar(value="BIỂU ĐỒ — XAUUSD • M15 • DRY-RUN")
-        tk.Label(left, textvariable=self.chart_title_var, bg=PALETTE["panel"], fg=PALETTE["cyan"],
-                 font=("", 11, "bold"), anchor="w").grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 0))
-        chart_row = tk.Frame(left, bg=PALETTE["panel"])
-        chart_row.grid(row=0, column=0, sticky="e", padx=8, pady=(6, 0))
-        self.zoom_var = tk.StringVar(value="100 nến")
-        tk.Label(chart_row, textvariable=self.zoom_var, bg=PALETTE["panel"], fg=PALETTE["muted"],
-                 font=("", 9)).pack(side="left", padx=4)
-        _button(chart_row, "−", lambda: self._change_zoom(-40), bg=PALETTE["panel2"]).pack(side="left", padx=2)
-        _button(chart_row, "+", lambda: self._change_zoom(40), bg=PALETTE["panel2"]).pack(side="left", padx=2)
+        left_top = ctk.CTkFrame(left, fg_color="transparent")
+        left_top.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 4))
+        _label(left_top, "BIỂU ĐỒ NẾN", size=14, bold=True, color=PALETTE["cyan"]).pack(side="left")
+        self.chart_title_lbl = _label(left_top, "M15 • DRY-RUN", size=12, color=PALETTE["muted"])
+        self.chart_title_lbl.pack(side="left", padx=8)
+        _button(left_top, "−", lambda: self._change_zoom(20), color=PALETTE["panel2"],
+                size=14, height=28, width=36).pack(side="right", padx=2)
+        _button(left_top, "+", lambda: self._change_zoom(-20), color=PALETTE["panel2"],
+                size=14, height=28, width=36).pack(side="right", padx=2)
+        self.zoom_lbl = _label(left_top, "100 nến", size=11, color=PALETTE["muted"])
+        self.zoom_lbl.pack(side="right", padx=6)
         self.chart = CandleChart(left)
-        self.chart.grid(row=1, column=0, sticky="nsew", padx=8, pady=4)
-        tk.Label(left, text="CHỈ BÁO KỸ THUẬT", bg=PALETTE["panel"], fg=PALETTE["cyan"],
-                 font=("", 11, "bold"), anchor="w").grid(row=2, column=0, sticky="ew", padx=8)
-        self.indicators_text = _text(left, height=5)
-        self.indicators_text.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
-        _set_text(self.indicators_text, "Chưa có chỉ báo.\nBấm “Làm mới MT5” hoặc “Chạy 1 phiên”.")
-        self.source_var = tk.StringVar(value="mt5")
-        self.mock_var = tk.BooleanVar(value=True)
+        self.chart.font_family = _font_family() or "DejaVu Sans"
+        self.chart.grid(row=1, column=0, sticky="nsew", padx=10)
+        ind = ctk.CTkFrame(left, fg_color="transparent")
+        ind.grid(row=2, column=0, sticky="ew", padx=12, pady=(6, 4))
+        ind.grid_columnconfigure(1, weight=1)
+        self.ind_labels: dict[str, ctk.CTkLabel] = {}
+        for row, (name, key) in enumerate((
+                ("RSI (14)", "rsi"), ("MACD", "macd"), ("ATR (14)", "atr"),
+                ("EMA 20", "ema20"), ("EMA 50", "ema50"), ("Bollinger", "bollinger"))):
+            _label(ind, name, size=12, color=PALETTE["muted"]).grid(row=row, column=0, sticky="w", pady=1)
+            value_lbl = _label(ind, "—", size=12, bold=True)
+            value_lbl.grid(row=row, column=1, sticky="e", pady=1)
+            self.ind_labels[key] = value_lbl
+        self.rsi_bar = _bar(ind, PALETTE["green"], height=6)
+        self.rsi_bar.grid(row=0, column=1, sticky="e", padx=(8, 64))
+        self.levels_lbl = _label(left, "", size=11, color=PALETTE["muted"],
+                                 wraplength=420, justify="left")
+        self.levels_lbl.grid(row=3, column=0, sticky="ew", padx=12, pady=(0, 10))
 
-        # Cột giữa: AI feed + trưởng phòng (panel tối, không nền nâu)
-        center = _panel(tab)
-        center.grid(row=0, column=1, sticky="nsew", padx=4)
+        # Cột giữa: AI feed cuộn + khối trưởng phòng cố định ở đáy
+        center = ctk.CTkFrame(tab, fg_color="transparent")
+        center.grid(row=0, column=1, sticky="nsew", padx=6)
         center.grid_rowconfigure(1, weight=1)
         center.grid_columnconfigure(0, weight=1)
-        feed_head = tk.Frame(center, bg=PALETTE["panel"])
-        feed_head.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 2))
-        tk.Label(feed_head, text="LIVE AI DEBATE FEED", bg=PALETTE["panel"], fg=PALETTE["cyan"],
-                 font=("", 11, "bold")).pack(side="left")
-        self.feed_sync_var = tk.StringVar(value="")
-        tk.Label(feed_head, textvariable=self.feed_sync_var, bg=PALETTE["panel"],
-                 fg=PALETTE["muted"], font=("", 9)).pack(side="right")
-        canvas = tk.Canvas(center, bg=PALETTE["panel"], highlightthickness=0)
-        scrollbar = tk.Scrollbar(center, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=scrollbar.set)
-        canvas.grid(row=1, column=0, sticky="nsew", padx=4)
-        scrollbar.grid(row=1, column=1, sticky="ns")
-        scroll_inner = tk.Frame(canvas, bg=PALETTE["panel"])
-        scroll_win = canvas.create_window((0, 0), window=scroll_inner, anchor="nw")
-        scroll_inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(scroll_win, width=e.width - 8))
+        feed_head = ctk.CTkFrame(center, fg_color="transparent")
+        feed_head.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        _label(feed_head, "LIVE AI DEBATE FEED", size=14, bold=True, color=PALETTE["cyan"]).pack(side="left")
+        self.feed_sync_lbl = _label(feed_head, "", size=11, color=PALETTE["muted"])
+        self.feed_sync_lbl.pack(side="right")
+        self.feed = ctk.CTkScrollableFrame(center, corner_radius=12, fg_color=PALETTE["panel"],
+                                           border_width=1, border_color=PALETTE["border"],
+                                           scrollbar_button_color=PALETTE["panel2"],
+                                           scrollbar_button_hover_color=PALETTE["border"])
+        self.feed.grid(row=1, column=0, sticky="nsew")
+        self.feed.grid_columnconfigure(0, weight=1)
         self.cards: dict[str, dict] = {}
-        for name in AGENT_NAMES:
-            card = tk.Frame(scroll_inner, bg=PALETTE["panel2"], highlightbackground=PALETTE["border"],
-                            highlightthickness=1)
-            card.pack(fill="x", padx=4, pady=3)
-            head = tk.Frame(card, bg=PALETTE["panel2"])
-            head.pack(fill="x", padx=6, pady=(4, 0))
-            tk.Label(head, text=f"[{name.upper()}]", bg=AGENT_HOW[name]["badge"], fg="#0B1220",
-                     font=("", 9, "bold"), padx=6, pady=1).pack(side="left")
-            dir_lbl = tk.Label(head, text="—", bg=PALETTE["panel2"], fg=PALETTE["muted"],
-                               font=("", 10, "bold"))
-            dir_lbl.pack(side="right")
-            status_lbl = tk.Label(card, text="Chờ chạy", bg=PALETTE["panel2"], fg=PALETTE["muted"],
-                                  font=("", 9), anchor="w")
-            status_lbl.pack(fill="x", padx=6)
-            conf_canvas = tk.Canvas(card, height=10, bg=PALETTE["panel"], highlightthickness=0)
-            conf_canvas.pack(fill="x", padx=6, pady=2)
-            reason_lbl = tk.Label(card, text=AGENT_HOW[name]["how"], bg=PALETTE["panel2"],
-                                  fg=PALETTE["text"], font=("", 9), wraplength=430, justify="left", anchor="w")
-            reason_lbl.pack(fill="x", padx=6, pady=(0, 2))
-            detail_btn = _button(card, "Xem cách AI này làm việc",
-                                 lambda n=name: self._show_agent_detail(n))
-            detail_btn.pack(anchor="e", padx=6, pady=(0, 4))
-            self.cards[name] = {"frame": card, "status": status_lbl, "dir": dir_lbl,
-                                "conf": conf_canvas, "reason": reason_lbl}
-        chief = tk.Frame(scroll_inner, bg=PALETTE["panel2"], highlightbackground=PALETTE["cyan"],
-                         highlightthickness=1)
-        chief.pack(fill="x", padx=4, pady=6)
-        self.chief_title_var = tk.StringVar(value="★ CHIEF DECISION — CHƯA CÓ KẾT LUẬN")
-        tk.Label(chief, textvariable=self.chief_title_var, bg=PALETTE["panel2"], fg=PALETTE["cyan"],
-                 font=("", 11, "bold"), anchor="w").pack(fill="x", padx=8, pady=(6, 0))
-        self.chief_text = tk.Text(chief, height=5, wrap="word", bg=PALETTE["panel2"],
-                                  fg=PALETTE["text"], relief="flat")
-        self.chief_text.pack(fill="x", padx=8, pady=4)
-        _set_text(self.chief_text, "Chưa có kết luận trưởng phòng.")
+        for row, name in enumerate(ANALYST_NAMES):
+            self.cards[name] = self._build_agent_card(self.feed, name)
+        chief_frame = _frame(center, radius=12, color=PALETTE["panel"], border=True)
+        chief_frame.configure(border_color=PALETTE["cyan"])
+        chief_frame.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        chief_head = ctk.CTkFrame(chief_frame, fg_color="transparent")
+        chief_head.pack(fill="x", padx=12, pady=(10, 2))
+        _label(chief_head, "◆ TRƯỞNG PHÒNG — QUYẾT ĐỊNH CUỐI", size=13, bold=True,
+               color=PALETTE["cyan"]).pack(side="left")
+        self.chief_title_lbl = _pill(chief_head, "—", PALETTE["grey"], size=11)
+        self.chief_title_lbl.pack(side="right")
+        self.chief_text = _textbox(chief_frame, height=78)
+        self.chief_text.pack(fill="x", padx=12, pady=4)
+        _set_text(self.chief_text, "Chưa có quyết định.")
+        _button(chief_frame, "👁  Xem cách trưởng phòng làm việc",
+                lambda: self._show_agent_detail("chief"), color=PALETTE["panel2"],
+                size=12, height=30).pack(fill="x", padx=12, pady=(0, 10))
 
-        # Cột phải: order ticket + kiểm tra rủi ro + tin tức/COT
-        right = _panel(tab)
-        right.grid(row=0, column=2, sticky="nsew", padx=(4, 0))
-        right.grid_rowconfigure(2, weight=1)
+        # Cột phải: order ticket + kiểm định rủi ro + tin tức
+        right = _frame(tab)
+        right.grid(row=0, column=2, sticky="nsew", padx=(6, 0))
         right.grid_columnconfigure(0, weight=1)
-        tk.Label(right, text="ORDER TICKET — XAUUSD", bg=PALETTE["panel"], fg=PALETTE["cyan"],
-                 font=("", 11, "bold"), anchor="w").grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 2))
-        self.ticket_vars = {}
-        for i, (key, label) in enumerate((("entry", "Entry Price:"), ("sl", "Stop Loss:"),
-                                          ("tp", "Take Profit:"), ("lot", "Lot Size:"))):
-            row_frame = tk.Frame(right, bg=PALETTE["panel"])
-            row_frame.grid(row=i + 1, column=0, sticky="ew", padx=8, pady=1)
-            row_frame.grid_columnconfigure(1, weight=1)
-            tk.Label(row_frame, text=label, bg=PALETTE["panel"], fg=PALETTE["text"],
-                     font=("", 10)).grid(row=0, column=0, sticky="w")
-            var = tk.StringVar(value="—")
-            self.ticket_vars[key] = var
-            tk.Label(row_frame, textvariable=var, bg=PALETTE["panel2"], fg=PALETTE["text"],
-                     font=("", 10, "bold"), anchor="e", width=16).grid(row=0, column=1, sticky="e")
-        self.risk_est_var = tk.StringVar(value="RỦI RO ƯỚC TÍNH: —")
-        tk.Label(right, textvariable=self.risk_est_var, bg=PALETTE["panel"], fg=PALETTE["muted"],
-                 font=("", 10, "bold"), anchor="w").grid(row=5, column=0, sticky="ew", padx=8, pady=4)
-        tk.Label(right, text="KIỂM TRA RỦI RO", bg=PALETTE["panel"], fg=PALETTE["cyan"],
-                 font=("", 11, "bold"), anchor="w").grid(row=6, column=0, sticky="ew", padx=8)
-        self.checks_text = _text(right, height=8)
-        self.checks_text.grid(row=7, column=0, sticky="nsew", padx=8, pady=2)
-        _set_text(self.checks_text, "Chưa chạy kiểm tra nào.")
-        tk.Label(right, text="TIN TỨC & COT SENTIMENT", bg=PALETTE["panel"], fg=PALETTE["cyan"],
-                 font=("", 11, "bold"), anchor="w").grid(row=8, column=0, sticky="ew", padx=8, pady=(4, 0))
-        self.news_text = _text(right, height=8)
-        self.news_text.grid(row=9, column=0, sticky="nsew", padx=8, pady=(0, 8))
-        _set_text(self.news_text, "Chưa có tin tức / COT.\nBấm “Lấy tin + COT”.")
-        self.order_var = tk.StringVar(value="Chưa có lệnh.")
-        tk.Label(right, textvariable=self.order_var, bg=PALETTE["panel"], fg=PALETTE["text"],
-                 font=("", 10, "bold"), wraplength=320, anchor="w", justify="left").grid(
-                     row=10, column=0, sticky="ew", padx=8, pady=(0, 6))
+        _label(right, "ORDER TICKET", size=14, bold=True, color=PALETTE["cyan"]).pack(
+            anchor="w", padx=12, pady=(10, 2))
+        self.ticket_title_lbl = _label(right, "XAUUSD • M15 • DRY-RUN", size=12, color=PALETTE["muted"])
+        self.ticket_title_lbl.pack(anchor="w", padx=12)
+        ticket = ctk.CTkFrame(right, fg_color="transparent")
+        ticket.pack(fill="x", padx=12, pady=6)
+        ticket.grid_columnconfigure(1, weight=1)
+        self.ticket_labels: dict[str, ctk.CTkLabel] = {}
+        for row, (caption, key) in enumerate((
+                ("Hướng:", "direction"), ("Entry:", "entry"), ("Stop Loss:", "sl"),
+                ("Take Profit:", "tp"), ("Lot (code tính):", "lot"),
+                ("Độ tin cậy:", "confidence"), ("Rủi ro ước tính:", "risk"))):
+            _label(ticket, caption, size=12, color=PALETTE["muted"]).grid(
+                row=row, column=0, sticky="w", pady=2)
+            value_lbl = _label(ticket, "—", size=12, bold=True)
+            value_lbl.grid(row=row, column=1, sticky="e", pady=2)
+            self.ticket_labels[key] = value_lbl
+        self.risk_est_lbl = _label(right, "", size=11, color=PALETTE["muted"])
+        self.risk_est_lbl.pack(fill="x", padx=12)
+        _label(right, "KIỂM ĐỊNH RỦI RO", size=13, bold=True, color=PALETTE["cyan"]).pack(
+            anchor="w", padx=12, pady=(8, 2))
+        self.risk_text = _textbox(right, height=128)
+        self.risk_text.pack(fill="x", padx=12)
+        _set_text(self.risk_text, "Chưa chạy phiên nào.")
+        _label(right, "TIN TỨC & COT", size=13, bold=True, color=PALETTE["cyan"]).pack(
+            anchor="w", padx=12, pady=(8, 2))
+        self.news_text = _textbox(right, height=110)
+        self.news_text.pack(fill="x", padx=12, pady=(0, 4))
+        _set_text(self.news_text, "Tin tức chỉ được lấy trong phiên thật (không phải mock).")
+        self.order_lbl = _label(right, "", size=12, color=PALETTE["cyan"])
+        self.order_lbl.pack(fill="x", padx=12, pady=(0, 10))
 
-        # Hàng nút điều khiển của tab 1
-        controls = tk.Frame(tab, bg=PALETTE["bg"])
-        controls.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
-        tk.Label(controls, text="Nguồn:", bg=PALETTE["bg"], fg=PALETTE["muted"]).pack(side="left")
-        for value, label in (("mt5", "MT5"), ("json", "JSON thử")):
-            tk.Radiobutton(controls, text=label, variable=self.source_var, value=value,
-                           bg=PALETTE["bg"], fg=PALETTE["text"], selectcolor=PALETTE["panel2"],
-                           activebackground=PALETTE["bg"], activeforeground=PALETTE["text"]).pack(side="left")
-        tk.Checkbutton(controls, text="AI giả (không tốn phí, không cần key)", variable=self.mock_var,
-                       bg=PALETTE["bg"], fg=PALETTE["text"], selectcolor=PALETTE["panel2"],
-                       activebackground=PALETTE["bg"], activeforeground=PALETTE["text"]).pack(side="left", padx=6)
-        self.run_btn = _button(controls, "▶  Chạy 1 phiên", lambda: self._start_run(False), bg=PALETTE["blue"], fg="white")
-        self.run_btn.pack(side="left", padx=4)
-        self.loop_btn = _button(controls, "↻  Chạy lặp lại", lambda: self._start_run(True), bg=PALETTE["blue"], fg="white")
-        self.loop_btn.pack(side="left", padx=4)
-        _button(controls, "Làm mới MT5", lambda: self.runner.preview(self.source_var.get(), False)).pack(side="left", padx=4)
-        _button(controls, "Lấy tin + COT", lambda: self.runner.preview(self.source_var.get(), True)).pack(side="left", padx=4)
-        _button(controls, "⛔  DỪNG KHẨN CẤP", self._create_stop, bg=PALETTE["danger"], fg="white").pack(side="left", padx=4)
-        _button(controls, "Gỡ STOP", self._clear_stop, bg=PALETTE["orange"], fg="#0B1220").pack(side="left", padx=4)
-        self.stop_var = tk.StringVar(value="")
-        tk.Label(controls, textvariable=self.stop_var, bg=PALETTE["bg"], fg=PALETTE["red"],
-                 font=("", 10, "bold")).pack(side="left", padx=8)
+        # Hàng điều khiển: nguồn + mock + 6 nút lớn
+        controls = _frame(tab, radius=12)
+        controls.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        controls.grid_columnconfigure(0, weight=1)
+        ctl_top = ctk.CTkFrame(controls, fg_color="transparent")
+        ctl_top.pack(fill="x", padx=12, pady=(10, 4))
+        _label(ctl_top, "NGUỒN DỮ LIỆU:", size=11, bold=True, color=PALETTE["muted"]).pack(side="left")
+        self.source_var = tk.StringVar(value="MT5")
+        self.source_seg = ctk.CTkSegmentedButton(
+            ctl_top, values=["MT5", "JSON thử"], variable=self.source_var,
+            font=F(13), selected_color=PALETTE["blue"], unselected_color=PALETTE["panel2"],
+            text_color=PALETTE["text"], height=34, command=self._on_source_change)
+        self.source_seg.pack(side="left", padx=8)
+        self.mock_var = tk.BooleanVar(value=False)
+        self.mock_box = ctk.CTkCheckBox(ctl_top, text="Dùng AI giả (mock, không tốn key)",
+                                        variable=self.mock_var, font=F(13),
+                                        text_color=PALETTE["text"], fg_color=PALETTE["blue"])
+        self.mock_box.pack(side="left", padx=8)
+        self.stop_lbl = _label(ctl_top, "STOP: TẮT", size=12, bold=True, color=PALETTE["grey"])
+        self.stop_lbl.pack(side="right", padx=4)
+        ctl_btns = ctk.CTkFrame(controls, fg_color="transparent")
+        ctl_btns.pack(fill="x", padx=12, pady=(0, 12))
+        for col in range(6):
+            ctl_btns.grid_columnconfigure(col, weight=1)
+        self.btn_run = _button(ctl_btns, "▶  Chạy 1 phiên", self._start_run, color=PALETTE["blue"])
+        self.btn_run.grid(row=0, column=0, sticky="ew", padx=3)
+        self.btn_loop = _button(ctl_btns, "↻  Chạy vòng lặp", self._start_loop)
+        self.btn_loop.grid(row=0, column=1, sticky="ew", padx=3)
+        self.btn_refresh = _button(ctl_btns, "⟳  Làm mới dữ liệu", self._refresh_data)
+        self.btn_refresh.grid(row=0, column=2, sticky="ew", padx=3)
+        self.btn_news = _button(ctl_btns, "📰  Tin tức & COT", self._refresh_news)
+        self.btn_news.grid(row=0, column=3, sticky="ew", padx=3)
+        self.btn_stop = _button(ctl_btns, "DỪNG KHẨN CẤP", self._create_stop, color=PALETTE["danger"])
+        self.btn_stop.grid(row=0, column=4, sticky="ew", padx=3)
+        self.btn_clear_stop = _button(ctl_btns, "Gỡ STOP", self._clear_stop,
+                                      color=PALETTE["orange"], text_color="#0B1220")
+        self.btn_clear_stop.grid(row=0, column=5, sticky="ew", padx=3)
 
-    # ----- Tab 2: Nhật ký & lịch sử -----
+    def _build_agent_card(self, parent, name: str) -> dict:
+        info = AGENT_HOW[name]
+        card = _frame(parent, radius=10)
+        card.pack(fill="x", pady=4, padx=2)
+        head = ctk.CTkFrame(card, fg_color="transparent")
+        head.pack(fill="x", padx=10, pady=(8, 2))
+        badge = ctk.CTkLabel(head, text=f"[{name.upper()}]", font=F(12, True),
+                             fg_color=info["badge"], text_color="white",
+                             corner_radius=6, padx=8, pady=2)
+        badge.pack(side="left")
+        pill = _pill(head, "CHỜ", PALETTE["grey"], size=11)
+        pill.pack(side="right")
+        status_lbl = _label(card, info["role"], size=12, color=PALETTE["muted"])
+        status_lbl.pack(fill="x", padx=10)
+        bar = _bar(card, PALETTE["grey"])
+        bar.pack(fill="x", padx=10, pady=4)
+        reasoning_lbl = _label(card, "", size=12, wraplength=330, justify="left")
+        reasoning_lbl.pack(fill="x", padx=10)
+        _button(card, "👁  Xem cách AI này làm việc",
+                lambda n=name: self._show_agent_detail(n), color=PALETTE["panel2"],
+                size=12, height=30).pack(fill="x", padx=10, pady=(4, 10))
+        return {"frame": card, "pill": pill, "status": status_lbl,
+                "bar": bar, "reasoning": reasoning_lbl}
+
+    # ---------- Tab 2: Nhật ký & lịch sử ----------
     def _build_tab2(self) -> None:
-        tab = tk.Frame(self.content, bg=PALETTE["bg"])
-        self.tab_frames["history"] = tab
+        tab = ctk.CTkFrame(self.content, fg_color="transparent")
         tab.grid_rowconfigure(1, weight=1)
-        tab.grid_columnconfigure(1, weight=1)
-        # Dải tóm tắt: chỉ đếm phiên, KHÔNG bịa tỉ lệ thắng hay lãi/lỗ theo phiên
-        # (nhật ký thật không ghi lãi/lỗ thực hiện theo phiên).
-        summary = _panel(tab)
-        summary.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
-        self.summary_vars = {}
-        for i, (key, label) in enumerate((("count", "Phiên đã ghi:"), ("buy", "BUY:"),
-                                          ("sell", "SELL:"), ("hold", "HOLD:"),
-                                          ("pass", "Cửa rủi ro PASS:"))):
-            tk.Label(summary, text=label, bg=PALETTE["panel"], fg=PALETTE["muted"],
-                     font=("", 10)).grid(row=0, column=i * 2, sticky="w", padx=(8, 2), pady=6)
-            var = tk.StringVar(value="0")
-            self.summary_vars[key] = var
-            tk.Label(summary, textvariable=var, bg=PALETTE["panel"], fg=PALETTE["cyan"],
-                     font=("", 11, "bold")).grid(row=0, column=i * 2 + 1, sticky="w", pady=6)
-        left = _panel(tab)
-        left.grid(row=1, column=0, sticky="ns", padx=(0, 4))
-        _button(left, "Làm mới lịch sử", self._load_history).pack(fill="x", padx=6, pady=(6, 2))
-        _button(left, "Mở thư mục output", self._open_output).pack(fill="x", padx=6, pady=2)
-        self.history_list = tk.Listbox(left, width=34, bg=PALETTE["panel2"], fg=PALETTE["text"],
-                                       selectbackground=PALETTE["blue"], relief="flat",
-                                       highlightbackground=PALETTE["border"], highlightthickness=1)
-        self.history_list.pack(fill="both", expand=True, padx=6, pady=6)
-        self.history_list.bind("<<ListboxSelect>>", self._on_history_select)
-        right = _panel(tab)
-        right.grid(row=1, column=1, sticky="nsew")
-        right.grid_columnconfigure(0, weight=1)
-        tk.Label(right, text="CHI TIẾT PHIÊN", bg=PALETTE["panel"], fg=PALETTE["cyan"],
-                 font=("", 11, "bold"), anchor="w").grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 2))
-        self.hist_summary_var = tk.StringVar(value="Chọn một phiên bên trái để xem lại toàn bộ.")
-        tk.Label(right, textvariable=self.hist_summary_var, bg=PALETTE["panel"], fg=PALETTE["text"],
-                 font=("", 10), anchor="w").grid(row=1, column=0, sticky="ew", padx=8)
-        self.hist_views: dict[str, dict] = {}
-        views_frame = tk.Frame(right, bg=PALETTE["panel"])
-        views_frame.grid(row=2, column=0, sticky="ew", padx=8, pady=4)
-        views_frame.grid_columnconfigure(1, weight=1)
-        for i, name in enumerate(AGENT_NAMES):
-            tk.Label(views_frame, text=name, bg=PALETTE["panel"], fg=PALETTE["text"],
-                     font=("", 9), anchor="w", width=18).grid(row=i, column=0, sticky="w")
-            dir_lbl = tk.Label(views_frame, text="—", bg=PALETTE["panel"], fg=PALETTE["muted"],
-                               font=("", 9, "bold"), width=6)
-            dir_lbl.grid(row=i, column=1, sticky="w")
-            bar = tk.Canvas(views_frame, height=10, bg=PALETTE["panel"], highlightthickness=0)
-            bar.grid(row=i, column=2, sticky="ew", padx=4)
-            conf_lbl = tk.Label(views_frame, text="", bg=PALETTE["panel"], fg=PALETTE["text"],
-                                font=("", 9), width=5)
-            conf_lbl.grid(row=i, column=3, sticky="e")
-            self.hist_views[name] = {"dir": dir_lbl, "bar": bar, "conf": conf_lbl}
-        tk.Label(right, text="QUYẾT ĐỊNH TRƯỞNG PHÒNG + KIỂM TRA RỦI RO", bg=PALETTE["panel"],
-                 fg=PALETTE["cyan"], font=("", 11, "bold"), anchor="w").grid(
-                     row=3, column=0, sticky="ew", padx=8, pady=(4, 0))
-        self.history_text = _text(right, height=12)
-        self.history_text.grid(row=4, column=0, sticky="nsew", padx=8, pady=(0, 8))
-        right.grid_rowconfigure(4, weight=1)
-        _set_text(self.history_text, "Chọn một phiên bên trái để xem lại toàn bộ.")
-        self._history_data: list = []
+        tab.grid_columnconfigure(0, weight=45)
+        tab.grid_columnconfigure(1, weight=55)
+        self.tab_frames["history"] = tab
 
-    # ----- Tab 3: Cấu hình & an toàn -----
+        # Dải tổng kết: chỉ đếm phiên thật đã ghi, KHÔNG bịa tỉ lệ thắng/P&L
+        # vì nhật ký phiên không ghi lãi/lỗ thực tế theo phiên.
+        summary = _frame(tab, radius=12)
+        summary.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        summary.grid_columnconfigure(tuple(range(5)), weight=1)
+        self.summary_labels: dict[str, ctk.CTkLabel] = {}
+        for col, (caption, key) in enumerate((
+                ("PHIÊN ĐÃ GHI", "sessions"), ("BUY", "buy"), ("SELL", "sell"),
+                ("HOLD", "hold"), ("RỦI RO CHO PHÉP", "pass"))):
+            box = ctk.CTkFrame(summary, fg_color="transparent")
+            box.grid(row=0, column=col, sticky="ew", padx=8, pady=8)
+            _label(box, caption, size=11, color=PALETTE["muted"]).pack()
+            value_lbl = _label(box, "0", size=20, bold=True)
+            value_lbl.pack()
+            self.summary_labels[key] = value_lbl
+
+        left = _frame(tab)
+        left.grid(row=1, column=0, sticky="nsew", padx=(0, 6))
+        left.grid_rowconfigure(1, weight=1)
+        left.grid_columnconfigure(0, weight=1)
+        _label(left, "DANH SÁCH PHIÊN", size=14, bold=True, color=PALETTE["cyan"]).pack(
+            anchor="w", padx=12, pady=(10, 4))
+        btn_row = ctk.CTkFrame(left, fg_color="transparent")
+        btn_row.pack(fill="x", padx=12, pady=(0, 6))
+        _button(btn_row, "⟳  Làm mới", self._load_history, color=PALETTE["panel2"],
+                size=12, height=32).pack(side="left", padx=(0, 6))
+        _button(btn_row, "📂  Mở thư mục output", self._open_output, color=PALETTE["panel2"],
+                size=12, height=32).pack(side="left")
+        self.history_scroll = ctk.CTkScrollableFrame(
+            left, corner_radius=10, fg_color=PALETTE["panel2"], border_width=0,
+            scrollbar_button_color=PALETTE["border"])
+        self.history_scroll.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        self.history_scroll.grid_columnconfigure(0, weight=1)
+        self._history: list[tuple[str, dict]] = []
+
+        right = _frame(tab)
+        right.grid(row=1, column=1, sticky="nsew", padx=(6, 0))
+        right.grid_columnconfigure(0, weight=1)
+        _label(right, "CHI TIẾT PHIÊN", size=14, bold=True, color=PALETTE["cyan"]).pack(
+            anchor="w", padx=12, pady=(10, 2))
+        self.hist_summary_lbl = _label(right, "Chưa chọn phiên nào.", size=12, color=PALETTE["muted"])
+        self.hist_summary_lbl.pack(anchor="w", padx=12)
+        self.hist_cards: dict[str, dict] = {}
+        for name in AGENT_NAMES:
+            row = ctk.CTkFrame(right, fg_color="transparent")
+            row.pack(fill="x", padx=12, pady=2)
+            row.grid_columnconfigure(1, weight=1)
+            _label(row, f"[{name.upper()}]", size=11, bold=True).grid(row=0, column=0, sticky="w")
+            bar = _bar(row, PALETTE["grey"], height=6)
+            bar.grid(row=0, column=1, sticky="ew", padx=8)
+            pill = _pill(row, "—", PALETTE["grey"], size=11)
+            pill.grid(row=0, column=2, sticky="e")
+            conf_lbl = _label(row, "", size=11, color=PALETTE["muted"])
+            conf_lbl.grid(row=0, column=3, sticky="e", padx=(6, 0))
+            self.hist_cards[name] = {"bar": bar, "pill": pill, "conf": conf_lbl}
+        _label(right, "QUYẾT ĐỊNH TRƯỞNG PHÒNG", size=12, bold=True, color=PALETTE["cyan"]).pack(
+            anchor="w", padx=12, pady=(8, 2))
+        self.hist_chief_text = _textbox(right, height=64)
+        self.hist_chief_text.pack(fill="x", padx=12)
+        _set_text(self.hist_chief_text, "Chưa chọn phiên nào.")
+        _label(right, "KIỂM ĐỊNH RỦI RO", size=12, bold=True, color=PALETTE["cyan"]).pack(
+            anchor="w", padx=12, pady=(8, 2))
+        self.hist_checks_text = _textbox(right, height=96)
+        self.hist_checks_text.pack(fill="x", padx=12, pady=(0, 6))
+        _set_text(self.hist_checks_text, "—")
+        self.hist_order_lbl = _label(right, "", size=12, color=PALETTE["cyan"])
+        self.hist_order_lbl.pack(fill="x", padx=12, pady=(0, 10))
+
+    # ---------- Tab 3: Cấu hình & an toàn ----------
     def _build_tab3(self) -> None:
-        tab = tk.Frame(self.content, bg=PALETTE["bg"])
-        self.tab_frames["config"] = tab
+        tab = ctk.CTkFrame(self.content, fg_color="transparent")
         tab.grid_rowconfigure(0, weight=1)
-        tab.grid_rowconfigure(1, weight=0)
         tab.grid_columnconfigure(0, weight=1)
         tab.grid_columnconfigure(1, weight=1)
-        cfg = load_config(self.config_path)
-        self.cfg_entries: dict[str, tk.Entry] = {}
-        self.cfg_checks: dict[str, tk.BooleanVar] = {}
+        self.tab_frames["config"] = tab
+        self.entries: dict[str, ctk.CTkEntry] = {}
 
-        left = _panel(tab)
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
-        tk.Label(left, text="CẤU HÌNH GIAO DỊCH", bg=PALETTE["panel"], fg=PALETTE["cyan"],
-                 font=("", 11, "bold"), anchor="w").pack(fill="x", padx=8, pady=(6, 4))
-        form = tk.Frame(left, bg=PALETTE["panel"])
-        form.pack(fill="x", padx=8)
-        form.grid_columnconfigure(1, weight=1)
-
-        def row(parent, label: str, key: str, value, row_no: int, disabled: bool = False) -> None:
-            tk.Label(parent, text=label, bg=PALETTE["panel"], fg=PALETTE["text"],
-                     font=("", 10), anchor="w").grid(row=row_no, column=0, sticky="w", pady=3)
-            entry = _entry(parent)
-            entry.insert(0, str(value))
-            entry.grid(row=row_no, column=1, sticky="ew", pady=3, padx=(6, 0))
+        def _row(parent, caption: str, key: str, default: str = "", disabled: bool = False):
+            row = ctk.CTkFrame(parent, fg_color="transparent")
+            row.pack(fill="x", padx=12, pady=3)
+            row.grid_columnconfigure(1, weight=1)
+            _label(row, caption, size=12, color=PALETTE["muted"]).grid(row=0, column=0, sticky="w")
+            entry = _entry(row, width=220)
+            entry.grid(row=0, column=1, sticky="e")
+            entry.insert(0, default)
             if disabled:
-                entry.config(state="disabled")
-            self.cfg_entries[key] = entry
+                entry.configure(state="disabled", fg_color=PALETTE["panel"],
+                                text_color=PALETTE["muted"])
+            self.entries[key] = entry
+            return entry
 
-        row(form, "Symbol:", "symbol", cfg.symbol, 0)
-        row(form, "Timeframe:", "timeframe", cfg.timeframe, 1)
-        row(form, "Max open positions:", "max_open_positions", cfg.max_open_positions, 2)
-        row(form, "Loop interval (giây):", "loop_interval_seconds", cfg.loop_interval_seconds, 3)
-        news_var = tk.BooleanVar(value=cfg.news_enabled)
-        sent_var = tk.BooleanVar(value=cfg.sentiment_enabled)
-        self.cfg_checks["news_enabled"] = news_var
-        self.cfg_checks["sentiment_enabled"] = sent_var
-        tk.Checkbutton(form, text="News enabled: Bật", variable=news_var, bg=PALETTE["panel"],
-                       fg=PALETTE["text"], selectcolor=PALETTE["panel2"],
-                       activebackground=PALETTE["panel"]).grid(row=4, column=0, columnspan=2, sticky="w", pady=3)
-        tk.Checkbutton(form, text="Sentiment enabled: Bật", variable=sent_var, bg=PALETTE["panel"],
-                       fg=PALETTE["text"], selectcolor=PALETTE["panel2"],
-                       activebackground=PALETTE["panel"]).grid(row=5, column=0, columnspan=2, sticky="w", pady=3)
-        row(form, "Mode:", "mode", cfg.mode, 6, disabled=True)
-        tk.Label(left, text="(Read-only — app không cho đổi sang live)", bg=PALETTE["panel"],
-                 fg=PALETTE["muted"], font=("", 9), anchor="w").pack(fill="x", padx=8)
+        left = ctk.CTkScrollableFrame(tab, corner_radius=12, fg_color=PALETTE["panel"],
+                                          border_width=1, border_color=PALETTE["border"],
+                                          scrollbar_button_color=PALETTE["panel2"],
+                                          scrollbar_button_hover_color=PALETTE["border"])
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        _label(left, "CẤU HÌNH CHUNG", size=14, bold=True, color=PALETTE["cyan"]).pack(
+            anchor="w", padx=12, pady=(10, 4))
+        _row(left, "Symbol:", "symbol", "XAUUSD")
+        _row(left, "Khung thời gian:", "timeframe", "M15")
+        _row(left, "Chế độ (chỉ đọc):", "mode", "dry_run", disabled=True)
+        _row(left, "Cho phép live (chỉ đọc):", "allow_live", "false", disabled=True)
+        _row(left, "Nghỉ giữa 2 phiên vòng lặp (giây):", "loop_interval_seconds", "900")
+        self.news_var = tk.BooleanVar(value=True)
+        ctk.CTkSwitch(left, text="News enabled (lịch ForexFactory + RSS Fed)",
+                      variable=self.news_var, font=F(12), text_color=PALETTE["text"],
+                      fg_color=PALETTE["border"], progress_color=PALETTE["cyan"]).pack(
+            anchor="w", padx=12, pady=4)
+        self.sentiment_var = tk.BooleanVar(value=True)
+        ctk.CTkSwitch(left, text="Sentiment enabled (COT + từ khóa tiêu đề)",
+                      variable=self.sentiment_var, font=F(12), text_color=PALETTE["text"],
+                      fg_color=PALETTE["border"], progress_color=PALETTE["cyan"]).pack(
+            anchor="w", padx=12, pady=4)
+        _label(left, "AI & MODEL (CHỈ ĐỌC)", size=13, bold=True, color=PALETTE["cyan"]).pack(
+            anchor="w", padx=12, pady=(12, 2))
+        self.agent_model_labels: list[ctk.CTkLabel] = []
+        for _ in AGENT_NAMES:
+            lbl = _label(left, "", size=12)
+            lbl.pack(anchor="w", padx=12)
+            self.agent_model_labels.append(lbl)
+        _label(left, "NGUỒN DỮ LIỆU (CHỈ ĐỌC)", size=13, bold=True, color=PALETTE["cyan"]).pack(
+            anchor="w", padx=12, pady=(12, 2))
+        for line in ("Giá & nến: MT5 (máy Windows, terminal đã đăng nhập)",
+                     "Lịch kinh tế: ForexFactory (XML) + RSS Fed",
+                     "COT vàng: FuturesBench (dữ liệu CFTC, công khai)"):
+            _label(left, "•  " + line, size=12, color=PALETTE["muted"]).pack(
+                anchor="w", padx=12, pady=1)
 
-        right = _panel(tab)
-        right.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
-        tk.Label(right, text="GIỚI HẠN RỦI RO (USD)", bg=PALETTE["panel"], fg=PALETTE["cyan"],
-                 font=("", 11, "bold"), anchor="w").pack(fill="x", padx=8, pady=(6, 4))
-        risk_form = tk.Frame(right, bg=PALETTE["panel"])
-        risk_form.pack(fill="x", padx=8)
-        risk_form.grid_columnconfigure(1, weight=1)
-        risk = cfg.risk
-        fields = [
-            ("Max risk per trade (USD):", "max_risk_usd_per_trade", risk.max_risk_usd_per_trade),
-            ("Max daily loss (USD):", "max_daily_loss_usd", risk.max_daily_loss_usd),
-            ("Max lot per order:", "max_lot_per_order", risk.max_lot_per_order),
-            ("Minimum confidence:", "min_confidence", risk.min_confidence),
-            ("Min stop loss distance (USD):", "min_sl_distance_usd", risk.min_sl_distance_usd),
-            ("Max stop loss distance (USD):", "max_sl_distance_usd", risk.max_sl_distance_usd),
-            ("Minimum reward risk:", "min_reward_risk", risk.min_reward_risk),
-            ("Max spread (USD):", "max_spread_usd", risk.max_spread_usd),
-            ("Max price move (USD):", "max_price_move_usd", risk.max_price_move_usd),
-            ("Max portfolio notional (USD):", "max_portfolio_notional_usd", risk.max_portfolio_notional_usd),
-        ]
-        for i, (label, key, value) in enumerate(fields):
-            row(risk_form, label, key, value, i)
-
-        bottom = tk.Frame(tab, bg=PALETTE["bg"])
-        bottom.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 0))
-        bottom.grid_columnconfigure(0, weight=1)
-        bottom.grid_columnconfigure(1, weight=2)
-        emergency = tk.Frame(bottom, bg=PALETTE["panel"], highlightbackground=PALETTE["red"],
-                             highlightthickness=1)
-        emergency.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
-        tk.Label(emergency, text="⚠ ĐIỀU KHIỂN KHẨN CẤP", bg=PALETTE["panel"], fg=PALETTE["red"],
-                 font=("", 11, "bold"), anchor="w").pack(fill="x", padx=8, pady=(6, 2))
-        btn_row = tk.Frame(emergency, bg=PALETTE["panel"])
-        btn_row.pack(fill="x", padx=8)
-        _button(btn_row, "⚠ DỪNG KHẨN CẤP", self._create_stop, bg=PALETTE["danger"], fg="white").pack(side="left", padx=(0, 6))
-        _button(btn_row, "Go STOP", self._clear_stop, bg=PALETTE["orange"], fg="#0B1220").pack(side="left")
-        tk.Label(emergency, text="STOP file status:", bg=PALETTE["panel"], fg=PALETTE["text"],
-                 font=("", 10), anchor="w").pack(fill="x", padx=8, pady=(6, 0))
-        self.stop_status_var = tk.StringVar(value="NOT ACTIVE")
-        tk.Label(emergency, textvariable=self.stop_status_var, bg=PALETTE["grey"], fg="white",
-                 font=("", 10, "bold"), padx=8, pady=2).pack(anchor="w", padx=8, pady=(0, 8))
-
-        keys_panel = _panel(bottom)
-        keys_panel.grid(row=0, column=1, sticky="nsew")
-        tk.Label(keys_panel, text="BẢO MẬT - AI KEY STATUS", bg=PALETTE["panel"], fg=PALETTE["cyan"],
-                 font=("", 11, "bold"), anchor="w").pack(fill="x", padx=8, pady=(6, 2))
-        self.key_pills: dict[str, tk.Label] = {}
-        pills_row = tk.Frame(keys_panel, bg=PALETTE["panel"])
-        pills_row.pack(fill="x", padx=8)
-        for env_name, label in (("OPENAI_API_KEY", "OpenAI"), ("GEMINI_API_KEY", "Gemini"),
-                                ("ANTHROPIC_API_KEY", "Anthropic")):
-            tk.Label(pills_row, text=f"{label}:", bg=PALETTE["panel"], fg=PALETTE["text"],
-                     font=("", 10)).pack(side="left", padx=(0, 2))
-            pill = _pill(pills_row, "MISSING", PALETTE["grey"])
-            pill.pack(side="left", padx=(0, 12))
-            self.key_pills[env_name] = pill
-        tk.Label(keys_panel, text="Lưu ý: Khóa API được chỉnh sửa trong file .env cục bộ. Không hiển thị giá trị khóa.",
-                 bg=PALETTE["panel"], fg=PALETTE["amber"], font=("", 9), anchor="w").pack(fill="x", padx=8, pady=4)
-        save_row = tk.Frame(keys_panel, bg=PALETTE["panel"])
-        save_row.pack(fill="x", padx=8, pady=(0, 4))
-        _button(save_row, "Mở .env trong Notepad", self._open_env).pack(side="left", padx=(0, 6))
-        _button(save_row, "Lưu cấu hình", self._save_config, bg=PALETTE["blue"], fg="white").pack(side="left")
-        self.config_msg_var = tk.StringVar(value="Một bản sao lưu config.yaml.bak sẽ được tạo khi lưu.")
-        tk.Label(keys_panel, textvariable=self.config_msg_var, bg=PALETTE["panel"],
-                 fg=PALETTE["muted"], font=("", 9), anchor="w").pack(fill="x", padx=8, pady=(0, 8))
+        right = ctk.CTkScrollableFrame(tab, corner_radius=12, fg_color=PALETTE["panel"],
+                                           border_width=1, border_color=PALETTE["border"],
+                                           scrollbar_button_color=PALETTE["panel2"],
+                                           scrollbar_button_hover_color=PALETTE["border"])
+        right.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        _label(right, "GIỚI HẠN RỦI RO", size=14, bold=True, color=PALETTE["cyan"]).pack(
+            anchor="w", padx=12, pady=(10, 4))
+        for field in EDITABLE_RISK_FIELDS:
+            _row(right, field + ":", field, "")
+        _label(right, "Đơn vị: USD/oz cho giá, USD cho tiền. SL/TP là giá tuyệt đối, không dùng pips.",
+               size=11, color=PALETTE["muted"]).pack(anchor="w", padx=12, pady=4)
+        _label(right, "AN TOÀN", size=13, bold=True, color=PALETTE["cyan"]).pack(
+            anchor="w", padx=12, pady=(8, 2))
+        self.stop_status_lbl = _label(right, "STOP: TẮT — app được phép chạy phiên.",
+                                      size=12, color=PALETTE["green"])
+        self.stop_status_lbl.pack(anchor="w", padx=12)
+        self.keys_config_lbl = _label(right, "Key: đang kiểm tra...", size=12, color=PALETTE["muted"])
+        self.keys_config_lbl.pack(anchor="w", padx=12, pady=(0, 6))
+        safe_row = ctk.CTkFrame(right, fg_color="transparent")
+        safe_row.pack(fill="x", padx=12, pady=4)
+        _button(safe_row, "DỪNG KHẨN CẤP", self._create_stop, color=PALETTE["danger"],
+                size=12, height=38).pack(side="left", padx=(0, 6), fill="x", expand=True)
+        _button(safe_row, "Gỡ STOP", self._clear_stop, color=PALETTE["orange"],
+                text_color="#0B1220", size=12, height=38).pack(side="left", fill="x", expand=True)
+        _button(right, "Mở file .env bằng Notepad (điền key ở đó, không hiện trong app)",
+                self._open_env, color=PALETTE["panel2"], size=12, height=38).pack(
+            fill="x", padx=12, pady=4)
+        self.btn_save = _button(right, "💾  Lưu cấu hình", self._save_config,
+                                color=PALETTE["blue"], height=48, size=15)
+        self.btn_save.pack(fill="x", padx=12, pady=(8, 12))
+        self.config_msg_lbl = _label(right, "", size=12, color=PALETTE["cyan"])
+        self.config_msg_lbl.pack(fill="x", padx=12, pady=(0, 10))
 
     # ---------- Hành động ----------
-    def _change_zoom(self, delta: int) -> None:
-        self.chart.visible = max(30, min(200, self.chart.visible + delta))
-        self.zoom_var.set(f"{self.chart.visible} nến")
-        self.chart.draw()
+    def _source(self) -> str:
+        return "mt5" if self.source_var.get() == "MT5" else "json"
 
-    def _start_run(self, loop: bool) -> None:
-        self.live.pause()
-        if not self.runner.start(self.source_var.get(), self.mock_var.get(),
-                                 "data/snapshot_example.json", loop):
-            self.live.resume()
-            messagebox.showinfo("Đang chạy", "Đang có 1 phiên chạy, chờ xong rồi chạy tiếp.")
+    def _on_source_change(self, _value=None) -> None:
+        if self._source() == "mt5":
+            self.live.start()
+        else:
+            self.live.stop()
+        self._refresh_status()
+
+    def _start_run(self, loop: bool = False) -> None:
+        if self.runner.is_running():
             return
-        for name in AGENT_NAMES:
-            self._set_card(name, "Đang chờ...", "—", 0.0, AGENT_HOW[name]["how"])
-        self.phase_var.set("Đang chạy phiên...")
+        try:
+            cfg = load_config(self.config_path)
+        except Exception as exc:
+            messagebox.showerror("Lỗi cấu hình", str(exc))
+            return
+        if cfg.live_enabled or cfg.mode == "live":
+            messagebox.showerror("Từ chối chạy",
+                                 "Chế độ live đã bật. App từ chối chạy để tránh bấm nhầm.")
+            return
+        self.live.pause()
+        for name, card in self.cards.items():
+            card["pill"].configure(text="CHỜ", fg_color=PALETTE["grey"], text_color="white")
+            card["status"].configure(text=AGENT_HOW[name]["role"])
+            card["reasoning"].configure(text="")
+            _set_bar(card["bar"], 0.0, PALETTE["grey"])
+        self._set_step(0)
+        self.phase_lbl.configure(text="Đang chạy phiên...")
+        self.runner.start(self._source(), bool(self.mock_var.get()),
+                          "data/snapshot_example.json", loop)
         self._refresh_buttons()
 
+    def _start_loop(self) -> None:
+        self._start_run(loop=True)
+
+    def _refresh_data(self) -> None:
+        self.phase_lbl.configure(text="Đang làm mới dữ liệu...")
+        self.runner.preview(self._source(), enrich=False)
+
+    def _refresh_news(self) -> None:
+        self.phase_lbl.configure(text="Đang lấy tin tức & COT...")
+        self.runner.preview(self._source(), enrich=True)
+
     def _create_stop(self) -> None:
-        cfg = load_config(self.config_path)
-        stop_file = cfg.project_root / cfg.risk.kill_switch_file
-        stop_file.write_text("STOP\n", encoding="utf-8")
-        self.runner.stop()
-        self.stop_var.set("ĐÃ DỪNG (file STOP)")
+        try:
+            cfg = load_config(self.config_path)
+            stop_path = cfg.project_root / cfg.risk.kill_switch_file
+            stop_path.write_text("STOP\n", encoding="utf-8")
+            self.phase_lbl.configure(text="Đã tạo file STOP. Phiên mới sẽ không chạy, vòng lặp sẽ dừng.")
+        except Exception as exc:
+            messagebox.showerror("Lỗi", str(exc))
         self._refresh_status()
 
     def _clear_stop(self) -> None:
-        cfg = load_config(self.config_path)
-        stop_file = cfg.project_root / cfg.risk.kill_switch_file
-        if stop_file.exists():
-            stop_file.unlink()
-        self.stop_var.set("")
-        self._refresh_status()
-
-    def _open_output(self) -> None:
-        out = Path(self.output_dir).resolve()
-        out.mkdir(parents=True, exist_ok=True)
-        if os.name == "nt":
-            os.startfile(str(out))  # noqa: S606 - mở thư mục local do người dùng bấm nút
-        else:
-            messagebox.showinfo("Thư mục output", str(out))
-
-    def _open_env(self) -> None:
-        env_path = Path(self.config_path).resolve().parent / ".env"
-        if not env_path.exists():
-            messagebox.showinfo("Chưa có file .env", "Chưa có file .env. Copy .env.example thành .env trước rồi mở lại.")
-            return
-        if os.name == "nt":
-            os.system(f'notepad "{env_path}"')
-        else:
-            messagebox.showinfo("File .env", str(env_path))
-
-    def _save_config(self) -> None:
-        import yaml
-
         try:
-            path = Path(self.config_path)
-            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-            symbol = self.cfg_entries["symbol"].get().strip()
-            timeframe = self.cfg_entries["timeframe"].get().strip().upper()
-            if not symbol:
-                raise ValueError("Symbol không được để trống.")
-            if timeframe not in TIMEFRAMES:
-                raise ValueError(f"Khung thời gian phải là một trong: {', '.join(TIMEFRAMES)}.")
-            risk = dict(data.get("risk") or {})
-            for field_name, (low, high) in EDITABLE_RISK_FIELDS.items():
-                value = float(self.cfg_entries[field_name].get())
-                if value < low or value > high:
-                    raise ValueError(f"{field_name} phải trong khoảng {low}–{high}.")
-                risk[field_name] = value
-            if risk["min_sl_distance_usd"] >= risk["max_sl_distance_usd"]:
-                raise ValueError("Khoảng cách SL tối thiểu phải nhỏ hơn tối đa.")
-            data["symbol"] = symbol
-            data["timeframe"] = timeframe
-            data["risk"] = risk
-            data["max_open_positions"] = int(self.cfg_entries["max_open_positions"].get())
-            data["loop_interval_seconds"] = int(self.cfg_entries["loop_interval_seconds"].get())
-            data["news_enabled"] = bool(self.cfg_checks["news_enabled"].get())
-            data["sentiment_enabled"] = bool(self.cfg_checks["sentiment_enabled"].get())
-            backup = path.with_suffix(".yaml.bak")
-            backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
-            path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
-            self.config_msg_var.set("Đã lưu cấu hình. Bản sao cũ ở config.yaml.bak.")
-            self._refresh_status()
+            cfg = load_config(self.config_path)
+            stop_path = cfg.project_root / cfg.risk.kill_switch_file
+            if stop_path.exists():
+                stop_path.unlink()
+            self.phase_lbl.configure(text="Đã gỡ STOP.")
         except Exception as exc:
-            messagebox.showerror("Không lưu được cấu hình", str(exc))
-
-    def _show_agent_detail(self, name: str) -> None:
-        view = self._current_views.get(name)
-        cfg = load_config(self.config_path)
-        agent_cfg = cfg.agents.get(name, {})
-        provider = agent_cfg.get("provider", "")
-        model = (cfg.providers.get(provider, {}) or {}).get("model", "")
-        detail = tk.Toplevel(self)
-        detail.title(f"{name} — {AGENT_HOW[name]['role']} làm việc như thế nào")
-        detail.geometry("860x640")
-        detail.configure(bg=PALETTE["bg"])
-        text = tk.Text(detail, wrap="word", bg=PALETTE["panel"], fg=PALETTE["text"])
-        text.pack(fill="both", expand=True, padx=8, pady=8)
-        parts = [
-            f"AI: {name} — {AGENT_HOW[name]['role']}",
-            f"Nhà cung cấp / model: {provider} / {model}",
-            f"Cách làm việc: {AGENT_HOW[name]['how']}",
-            "",
-            "1) Đầu vào: cùng một snapshot cho mọi AI — giá bid/ask, chỉ báo, tin tức, sentiment, danh mục. Xem phần dữ liệu trong cửa sổ chính, hoặc file nhật ký của phiên.",
-            "2) Lệnh hệ thống (system prompt) gửi cho AI:",
-            SYSTEM_PROMPTS.get(name, "(Trưởng phòng dùng prompt riêng trong orchestrator.)"),
-            "",
-            "3) Đầu ra bắt buộc: DUY NHẤT 1 JSON với direction, confidence, entry, stop_loss, take_profit (giá USD), reasoning, invalidation, evidence. JSON lỗi thì coi như HOLD.",
-        ]
-        if self._current_snapshot:
-            parts += ["", "4) Snapshot đã gửi trong phiên gần nhất (rút gọn):",
-                      self._current_snapshot.get("prompt_text", "")[:3000]]
-        if view:
-            parts += ["", "5) Kết quả của AI này trong phiên gần nhất:",
-                      f"Hướng: {view['direction']}, tin cậy: {view['confidence']}, "
-                      f"entry: {view['entry']}, SL: {view['stop_loss']}, TP: {view['take_profit']}",
-                      f"Lý do: {view['reasoning']}",
-                      f"Điểm vô hiệu: {view['invalidation']}",
-                      f"Bằng chứng: {view['evidence']}",
-                      "", "Câu trả lời thô của AI:", view.get("raw_text") or view.get("raw", "")]
-        else:
-            parts.append("\nAI này chưa chạy trong phiên gần nhất.")
-        text.insert("1.0", "\n".join(str(p) for p in parts))
-        text.config(state="disabled")
-
-    # ---------- Cập nhật giao diện từ sự kiện ----------
-    def _draw_conf(self, canvas: tk.Canvas, confidence: float, color: str) -> None:
-        canvas.delete("all")
-        width = canvas.winfo_width()
-        if width < 10:
-            width = 200
-        height = canvas.winfo_height() or 10
-        canvas.create_rectangle(0, 0, width, height, fill=PALETTE["panel2"], outline="")
-        canvas.create_rectangle(0, 0, max(0, width * max(0.0, min(1.0, float(confidence or 0.0)))),
-                                height, fill=color, outline="")
-
-    def _set_card(self, name: str, status: str, direction: str, confidence: float, reasoning: str) -> None:
-        card = self.cards.get(name)
-        if not card:
-            return
-        card["status"].config(text=status)
-        card["dir"].config(text=direction, fg=_direction_color(direction) if direction in ("BUY", "SELL", "HOLD") else PALETTE["muted"])
-        self._draw_conf(card["conf"], confidence, _direction_color(direction))
-        card["reason"].config(text=reasoning or "")
-
-    def _set_step(self, index: int) -> None:
-        for i, lbl in enumerate(self.step_labels):
-            if i < index:
-                lbl.config(bg=PALETTE["green"], fg="#0B1220")
-            elif i == index:
-                lbl.config(bg=PALETTE["amber"], fg="#0B1220")
-            else:
-                lbl.config(bg=PALETTE["panel2"], fg=PALETTE["muted"])
-
-    def _update_market_bar(self, bid: float, ask: float, balance: float | None = None,
-                           equity: float | None = None, connected: bool = True) -> None:
-        price = (bid + ask) / 2
-        self.price_var.set(f"{price:,.2f} USD")
-        self.spread_var.set(f"SPREAD: {ask - bid:.2f}")
-        if balance:
-            self._last_balance = balance
-            self.bal_var.set(f"BAL: {balance:,.2f} USD")
-        if equity:
-            self.eq_var.set(f"EQUITY: {equity:,.2f} USD")
-        if self._ref_close:
-            change = price - self._ref_close
-            pct = change / self._ref_close * 100 if self._ref_close else 0.0
-            sign = "+" if change >= 0 else ""
-            self.change_var.set(f"{sign}{change:.2f} ({sign}{pct:.2f}%)")
-            self.change_lbl.config(fg=PALETTE["green"] if change >= 0 else PALETTE["red"])
-        self.mt5_var.set("MT5: CONNECTED • ONLINE" if connected else "MT5: CHƯA KẾT NỐI")
-        self.mt5_lbl.config(fg=PALETTE["green"] if connected else PALETTE["amber"])
-
-    def _show_snapshot(self, snap: dict) -> None:
-        self._current_snapshot = snap
-        self.symbol_var.set(snap["symbol"])
-        self.chart_title_var.set(f"BIỂU ĐỒ — {snap['symbol']} • {snap['timeframe']} • DRY-RUN")
-        ind = snap.get("indicators", {})
-        candles = snap.get("candles") or []
-        if candles:
-            if len(candles) >= 2:
-                self._ref_close = candles[-2]["close"]
-            self.chart.set_candles(candles, ind.get("support"), ind.get("resistance"))
-        self._update_market_bar(snap["bid"], snap["ask"], snap.get("account_balance"),
-                                snap.get("account_equity"), connected=True)
-        lines = [
-            f"RSI(14): {ind.get('rsi14')}  •  MACD: {ind.get('macd_line')} / {ind.get('signal')} • Hist {ind.get('macd_histogram')}",
-            f"ATR(14): {ind.get('atr14_usd')} USD  •  EMA20: {ind.get('ema20')}  •  EMA50: {ind.get('ema50')}",
-            f"BOLLINGER: Upper {ind.get('bollinger_upper_usd')} • Mid {ind.get('bollinger_middle_usd')} • Lower {ind.get('bollinger_lower_usd')}",
-            f"Hỗ trợ: {ind.get('support')}  •  Kháng cự: {ind.get('resistance')}",
-            f"Vị thế mở: {snap['open_positions']}  •  Lỗ trong ngày: {snap['daily_loss_usd']} USD  •  Nguồn: {snap['source']} lúc {snap.get('captured_at') or 'không rõ'}",
-        ]
-        _set_text(self.indicators_text, "\n".join(str(x) for x in lines))
-        news = (snap.get("news_text") or "Chưa có tin tức.") + "\n\n" + (snap.get("sentiment_text") or "Chưa có dữ liệu sentiment.")
-        _set_text(self.news_text, news[:4000])
-        self.feed_sync_var.set(f"Synced {snap.get('captured_at') or ''}")
-
-    def _show_result(self, result: dict) -> None:
-        self._show_snapshot(result["snapshot"])
-        for view in result["views"]:
-            self._current_views[view["name"]] = view
-            self._set_card(view["name"], "Đã xong", view["direction"], view["confidence"], view["reasoning"])
-        chief = result["chief"]
-        self._current_views["chief"] = chief
-        self._set_card("chief", "Đã xong", chief["direction"], chief["confidence"], chief["reasoning"])
-        risk = result["risk"]
-        self.chief_title_var.set(f"★ CHIEF DECISION — {chief['direction']} • CONF {int(float(chief['confidence'] or 0) * 100)}%")
-        _set_text(self.chief_text,
-                  f"Confidence: {chief['confidence']} • Quyết định: {chief['direction']}\n"
-                  f"Entry: {chief['entry']} USD, SL: {chief['stop_loss']} USD, TP: {chief['take_profit']} USD\n"
-                  f"Lý do: {chief['reasoning']}\nĐiểm vô hiệu: {chief['invalidation']}")
-        self.ticket_vars["entry"].set(f"{chief['entry']} USD" if chief["entry"] is not None else "—")
-        self.ticket_vars["sl"].set(f"{chief['stop_loss']} USD" if chief["stop_loss"] is not None else "—")
-        self.ticket_vars["tp"].set(f"{chief['take_profit']} USD" if chief["take_profit"] is not None else "—")
-        self.ticket_vars["lot"].set(f"{risk['lot']}" if risk.get("lot") else "—")
-        if risk.get("lot") and risk.get("sl_distance") and self._last_balance:
-            risk_usd = risk["lot"] * risk["sl_distance"] * 100
-            self.risk_est_var.set(f"RỦI RO ƯỚC TÍNH: {risk_usd:,.0f} USD ({risk_usd / self._last_balance * 100:.2f}% vốn)")
-        else:
-            self.risk_est_var.set("RỦI RO ƯỚC TÍNH: —")
-        checks = "\n".join(f"{'✓ PASS' if c['passed'] else '✕ FAIL'}  {c['name']}: {c['detail']}" for c in risk.get("checks", []))
-        _set_text(self.checks_text, checks or risk["reason"])
-        self.order_var.set(f"{result['order']}  •  Lot: {risk['lot']}  •  File: {result['saved']}")
-        self._load_history()
-
-    def _poll_events(self) -> None:
-        try:
-            while True:
-                kind, payload = self.events.get_nowait()
-                if kind == "log":
-                    self.phase_var.set(str(payload))
-                elif kind == "step":
-                    self._set_step(int(payload))
-                elif kind == "tick":
-                    self._update_market_bar(payload["bid"], payload["ask"],
-                                            payload.get("balance"), payload.get("equity"))
-                    self.chart.update_tick(payload["bid"], payload["ask"])
-                    if payload.get("candles"):
-                        candles = payload["candles"]
-                        if len(candles) >= 2:
-                            self._ref_close = candles[-2]["close"]
-                        snap = self._current_snapshot or {}
-                        ind = snap.get("indicators", {})
-                        self.chart.set_candles(candles, ind.get("support"), ind.get("resistance"))
-                elif kind == "live_error":
-                    self.mt5_var.set("MT5: CHƯA KẾT NỐI")
-                    self.mt5_lbl.config(fg=PALETTE["amber"])
-                    self.phase_var.set(f"Realtime: {payload}")
-                elif kind == "snapshot":
-                    self._show_snapshot(payload)
-                elif kind == "view":
-                    self._current_views[payload["name"]] = payload
-                    status = "Đã xong vòng 2" if payload.get("round") == 2 else "Đã xong"
-                    self._set_card(payload["name"], status, payload["direction"], payload["confidence"], payload["reasoning"])
-                elif kind == "result":
-                    self._show_result(payload)
-                elif kind == "error":
-                    messagebox.showerror("Lỗi khi chạy phiên", str(payload))
-                    self.phase_var.set(f"Lỗi: {payload}")
-                elif kind == "finished":
-                    self.live.resume()
-                    self._refresh_buttons()
-                    self._refresh_status()
-        except queue.Empty:
-            pass
-        self.after(200, self._poll_events)
-
-    def _tick_clock(self) -> None:
-        self.clock_var.set(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        self.after(1000, self._tick_clock)
+            messagebox.showerror("Lỗi", str(exc))
+        self._refresh_status()
 
     def _refresh_buttons(self) -> None:
         running = self.runner.is_running()
         state = "disabled" if running else "normal"
-        self.run_btn.config(state=state)
-        self.loop_btn.config(state=state)
+        for btn in (self.btn_run, self.btn_loop, self.btn_refresh, self.btn_news):
+            btn.configure(state=state)
+
+    def _set_step(self, step: int) -> None:
+        for i, lbl in enumerate(self.step_labels):
+            if i < step:
+                lbl.configure(fg_color=PALETTE["green"], text_color="#0B1220")
+            elif i == step:
+                lbl.configure(fg_color=PALETTE["blue"], text_color="white")
+            else:
+                lbl.configure(fg_color=PALETTE["panel2"], text_color=PALETTE["muted"])
+
+    def _change_zoom(self, delta: int) -> None:
+        self.chart.visible = max(30, min(200, self.chart.visible + delta))
+        self.chart.draw()
+        self.zoom_lbl.configure(text=f"{self.chart.visible} nến")
+
+    # ---------- Hiển thị dữ liệu ----------
+    def _fmt_price(self, value) -> str:
+        return "—" if value is None else f"{float(value):,.2f}"
+
+    def _usd(self, value) -> str:
+        return "—" if value is None else f"{float(value):,.2f} USD"
+
+    def _update_market_bar(self, price: float, spread: float, balance: float, equity: float) -> None:
+        self.price_lbl.configure(text=f"{price:,.2f} USD")
+        if self._ref_close is None:
+            self._ref_close = price
+        change = price - self._ref_close
+        pct = (change / self._ref_close * 100) if self._ref_close else 0.0
+        self.change_lbl.configure(text=f"{change:+,.2f} ({pct:+.2f}%)",
+                                  text_color=PALETTE["green"] if change >= 0 else PALETTE["red"])
+        self.spread_lbl.configure(text=f"{spread:.2f}")
+        self.bal_lbl.configure(text=f"{balance:,.2f} USD")
+        self.eq_lbl.configure(text=f"{equity:,.2f} USD")
+        self._last_balance = balance
+        self._last_equity = equity
+
+    def _show_snapshot(self, snap: dict) -> None:
+        self._current_snapshot = snap
+        self.symbol_lbl.configure(text=snap.get("symbol", "XAUUSD"))
+        self.chart_title_lbl.configure(
+            text=f"{snap.get('timeframe', '')} • {snap.get('source', '').upper()} • DRY-RUN")
+        self.ticket_title_lbl.configure(
+            text=f"{snap.get('symbol', '')} • {snap.get('timeframe', '')} • DRY-RUN")
+        ind = snap.get("indicators") or {}
+
+        def _num(*keys):
+            for key in keys:
+                value = ind.get(key)
+                if value is not None:
+                    try:
+                        return float(value)
+                    except (TypeError, ValueError):
+                        return None
+            return None
+
+        rsi = _num("rsi14", "rsi")
+        self.ind_labels["rsi"].configure(text="—" if rsi is None else f"{rsi:.1f}")
+        _set_bar(self.rsi_bar, (rsi or 0.0) / 100.0,
+                 PALETTE["green"] if (rsi or 50) <= 30 else
+                 PALETTE["red"] if (rsi or 50) >= 70 else PALETTE["cyan"])
+        macd = ind.get("macd")
+        if isinstance(macd, dict):
+            self.ind_labels["macd"].configure(
+                text=f"{float(macd.get('line', 0) or 0):+.2f} / "
+                     f"{float(macd.get('signal', 0) or 0):+.2f}")
+        elif isinstance(macd, str):
+            self.ind_labels["macd"].configure(text=macd[:44])
+        else:
+            line = _num("macd_line")
+            signal = _num("macd_signal")
+            self.ind_labels["macd"].configure(
+                text="—" if line is None else f"{line:+.2f} / {signal:+.2f}"
+                if signal is not None else f"{line:+.2f}")
+        atr = _num("atr14_usd", "atr")
+        self.ind_labels["atr"].configure(text="—" if atr is None else f"{atr:,.2f}")
+        ema20 = _num("ema20")
+        self.ind_labels["ema20"].configure(text="—" if ema20 is None else f"{ema20:,.2f}")
+        ema50 = _num("ema50")
+        self.ind_labels["ema50"].configure(text="—" if ema50 is None else f"{ema50:,.2f}")
+        boll_upper = _num("bollinger_upper_usd", "bollinger_upper")
+        boll_lower = _num("bollinger_lower_usd", "bollinger_lower")
+        boll = ind.get("bollinger")
+        if boll_upper is not None and boll_lower is not None:
+            self.ind_labels["bollinger"].configure(
+                text=f"{boll_lower:,.2f} – {boll_upper:,.2f}")
+        elif isinstance(boll, dict) and boll.get("upper") is not None:
+            self.ind_labels["bollinger"].configure(
+                text=f"{float(boll['lower']):,.2f} – {float(boll['upper']):,.2f}")
+        else:
+            self.ind_labels["bollinger"].configure(text="—")
+        support = ind.get("support") or []
+        resistance = ind.get("resistance") or []
+        self.levels_lbl.configure(
+            text="Hỗ trợ: " + (", ".join(f"{float(v):,.2f}" for v in support) or "—")
+            + "   •   Kháng cự: " + (", ".join(f"{float(v):,.2f}" for v in resistance) or "—"))
+        candles = snap.get("candles") or []
+        if candles:
+            self.chart.set_candles(candles, support, resistance)
+        self._update_market_bar(float(snap.get("price") or 0), float(snap.get("spread") or 0),
+                                float(snap.get("account_balance") or 0),
+                                float(snap.get("account_equity") or 0))
+        news_parts = []
+        if snap.get("news_text"):
+            news_parts.append("TIN TỨC:\n" + str(snap["news_text"]))
+        if snap.get("sentiment_text"):
+            news_parts.append("SENTIMENT / COT:\n" + str(snap["sentiment_text"]))
+        if news_parts:
+            _set_text(self.news_text, "\n\n".join(news_parts))
+        self.feed_sync_lbl.configure(
+            text=f"Đồng bộ: {snap.get('captured_at', '')} • nguồn {snap.get('source', '')}")
+        self.mt5_lbl.configure(text="MT5: ĐÃ KẾT NỐI • ONLINE", text_color=PALETTE["green"])
+
+    def _set_card(self, name: str, view: dict, round_no: int) -> None:
+        self._current_views[name] = view
+        card = self.cards.get(name)
+        if card is None:
+            return
+        direction = view.get("direction", "HOLD")
+        conf = float(view.get("confidence") or 0.0)
+        color = _direction_color(direction)
+        card["pill"].configure(text=f"{direction} • CONF {int(conf * 100)}%",
+                               fg_color=color, text_color="#0B1220")
+        stage = "vòng 1" if round_no == 1 else "vòng 2 (tranh luận)" if round_no == 2 else ""
+        card["status"].configure(text=f"{AGENT_HOW[name]['role']} — {stage}" if stage
+                                else AGENT_HOW[name]["role"])
+        _set_bar(card["bar"], conf, color)
+        reasoning = str(view.get("reasoning") or "")
+        card["reasoning"].configure(text=reasoning[:400])
+
+    def _format_checks(self, checks: list) -> str:
+        lines = []
+        for check in checks or []:
+            if isinstance(check, str):
+                lines.append(check)
+                continue
+            ok = check.get("ok", check.get("passed"))
+            mark = "✓ PASS" if ok else "✗ CHẶN"
+            detail = check.get("detail") or ""
+            lines.append(f"{mark} — {check.get('name', '')}" + (f": {detail}" if detail else ""))
+        return "\n".join(lines)
+
+    def _show_result(self, result: dict) -> None:
+        for view in result.get("views", []):
+            self._set_card(view["name"], view, view.get("round", 2))
+        chief = result.get("chief") or {}
+        direction = chief.get("direction", "HOLD")
+        conf = float(chief.get("confidence") or 0.0)
+        color = _direction_color(direction)
+        self.chief_title_lbl.configure(text=f"{direction} • CONF {int(conf * 100)}%",
+                                       fg_color=color, text_color="#0B1220")
+        entry = self._usd(chief.get("entry"))
+        sl = self._usd(chief.get("stop_loss"))
+        tp = self._usd(chief.get("take_profit"))
+        chief_lines = [
+            str(chief.get("reasoning") or "Không có lý do."),
+            f"Entry {entry} • SL {sl} • TP {tp}",
+            f"Vô hiệu khi: {chief.get('invalidation') or '—'}",
+        ]
+        _set_text(self.chief_text, "\n".join(chief_lines))
+        risk = result.get("risk") or {}
+        self.ticket_labels["direction"].configure(text=direction)
+        self.ticket_labels["entry"].configure(text=entry)
+        self.ticket_labels["sl"].configure(text=sl)
+        self.ticket_labels["tp"].configure(text=tp)
+        lot = risk.get("lot")
+        lot_value = None if lot is None else float(lot)
+        self.ticket_labels["lot"].configure(
+            text="—" if not lot_value else f"{lot_value:.2f}")
+        self.ticket_labels["confidence"].configure(text=f"{int(conf * 100)}%")
+        sl_distance = risk.get("sl_distance")
+        sl_value = None if sl_distance is None else float(sl_distance)
+        self.ticket_labels["risk"].configure(
+            text="—" if not sl_value else f"{sl_value:.2f} USD")
+        est = None
+        if sl_value and lot_value:
+            est = sl_value * lot_value * 100.0
+        self.risk_est_lbl.configure(
+            text="" if est is None else f"Lỗ tối đa ước tính nếu chạm SL: {est:,.2f} USD (chưa tính spread/phí).")
+        checks_text = self._format_checks(risk.get("checks"))
+        verdict = "CHO PHÉP" if risk.get("allowed") else "CHẶN"
+        _set_text(self.risk_text,
+                  f"Kết luận: {verdict} — {risk.get('reason', '')}\n\n{checks_text}")
+        self.order_lbl.configure(text=str(result.get("order", "")))
+        self._load_history()
+
+    # ---------- Vòng lặp sự kiện ----------
+    def _poll_events(self) -> None:
+        try:
+            while True:
+                kind, payload = self.events.get_nowait()
+                if kind == "step":
+                    self._set_step(int(payload))
+                elif kind == "view":
+                    self._set_card(payload["name"], payload, payload.get("round", 0))
+                elif kind == "log":
+                    text = str(payload or "")
+                    current = self.phase_lbl.cget("text")
+                    if text and (current.startswith("Lỗi:") or current.startswith("Realtime:")):
+                        self.phase_lbl.configure(text=text)
+                    elif text:
+                        self.phase_lbl.configure(text=text)
+                elif kind == "snapshot":
+                    self._show_snapshot(payload)
+                elif kind == "result":
+                    self._show_result(payload)
+                elif kind == "error":
+                    self.phase_lbl.configure(text=f"Lỗi: {payload}", text_color=PALETTE["red"])
+                elif kind == "tick":
+                    bid = float(payload["bid"])
+                    ask = float(payload["ask"])
+                    price = (bid + ask) / 2
+                    current = self.phase_lbl.cget("text")
+                    if current.startswith("Lỗi:") or current.startswith("Realtime:"):
+                        self.phase_lbl.configure(text="Realtime đang chạy.",
+                                                 text_color=PALETTE["cyan"])
+                    self.mt5_lbl.configure(text="MT5: ĐÃ KẾT NỐI • ONLINE",
+                                           text_color=PALETTE["green"])
+                    self.chart.update_tick(bid, ask)
+                    if payload.get("candles"):
+                        snap = self._current_snapshot or {}
+                        ind = snap.get("indicators") or {}
+                        self.chart.set_candles(payload["candles"],
+                                               ind.get("support"), ind.get("resistance"))
+                    balance = payload.get("balance")
+                    equity = payload.get("equity")
+                    self._update_market_bar(
+                        price, ask - bid,
+                        float(balance) if balance is not None else self._last_balance,
+                        float(equity) if equity is not None else self._last_equity)
+                elif kind == "live_error":
+                    self.phase_lbl.configure(text=f"Realtime: {payload}",
+                                             text_color=PALETTE["amber"])
+                    self.mt5_lbl.configure(text="MT5: CHƯA KẾT NỐI", text_color=PALETTE["amber"])
+                elif kind == "finished":
+                    self._refresh_buttons()
+                    self.live.resume()
+                    self._refresh_status()
+        except queue.Empty:
+            pass
+        except Exception as exc:
+            # Một payload lỗi không được giết vòng lặp sự kiện: ghi lỗi rồi
+            # vẫn hẹn lần quét tiếp theo.
+            try:
+                self.phase_lbl.configure(text=f"Lỗi hiển thị: {exc}",
+                                         text_color=PALETTE["red"])
+            except Exception:
+                pass
+        self.after(200, self._poll_events)
+
+    def _tick_clock(self) -> None:
+        self.clock_lbl.configure(text=datetime.now().strftime("%H:%M:%S  %d/%m/%Y"))
+        self.after(1000, self._tick_clock)
+
+    # ---------- Trạng thái / lịch sử / cấu hình ----------
+    def _set_entry(self, entry: ctk.CTkEntry, text: str) -> None:
+        was_disabled = str(entry.cget("state")) == "disabled"
+        if was_disabled:
+            entry.configure(state="normal")
+        entry.delete(0, "end")
+        entry.insert(0, text)
+        if was_disabled:
+            entry.configure(state="disabled")
+
+    def _key_status(self) -> tuple[bool, bool, bool]:
+        try:
+            cfg = load_config(self.config_path)
+            env_path = cfg.project_root / ".env"
+            content = env_path.read_text(encoding="utf-8", errors="ignore") if env_path.exists() else ""
+        except Exception:
+            content = ""
+        present = {}
+        for line in content.splitlines():
+            if "=" in line and not line.strip().startswith("#"):
+                key, value = line.split("=", 1)
+                present[key.strip()] = value.strip().strip('"').strip("'")
+        return (bool(present.get("OPENAI_API_KEY")), bool(present.get("GEMINI_API_KEY")),
+                bool(present.get("ANTHROPIC_API_KEY")))
 
     def _refresh_status(self) -> None:
         try:
             cfg = load_config(self.config_path)
         except Exception:
             return
-        self.mode_var.set("LIVE" if cfg.mode == "live" else "DEMO" if cfg.mode == "demo" else "DRY-RUN")
-        stop_file = cfg.project_root / cfg.risk.kill_switch_file
-        stopped = stop_file.exists()
-        self.stop_var.set("ĐÃ DỪNG (file STOP)" if stopped else "")
-        self.stop_status_var.set("ACTIVE" if stopped else "NOT ACTIVE")
-        keys = []
-        for env_name, label in (("OPENAI_API_KEY", "OpenAI"), ("GEMINI_API_KEY", "Gemini"), ("ANTHROPIC_API_KEY", "Claude")):
-            present = bool(os.getenv(env_name, "").strip())
-            keys.append(f"{label}: {'● có' if present else '○ chưa có'}")
-            pill = self.key_pills.get(env_name)
-            if pill is not None:
-                pill.config(text="PRESENT" if present else "MISSING",
-                            bg=PALETTE["green"] if present else PALETTE["grey"])
-        self.keys_var.set("Key: " + "  •  ".join(keys) + "  (chỉ hiện có/không có, không hiện giá trị)")
-        self.symbol_var.set(cfg.symbol)
-        self.chart_title_var.set(f"BIỂU ĐỒ — {cfg.symbol} • {cfg.timeframe} • DRY-RUN")
-        self._refresh_buttons()
+        mode = str(cfg.mode).upper()
+        self.mode_pill.configure(text=mode,
+                                 fg_color=PALETTE["red"] if cfg.mode == "live"
+                                 else PALETTE["cyan"] if cfg.mode == "demo"
+                                 else PALETTE["amber"],
+                                 text_color="#0B1220" if cfg.mode != "demo" else "#0B1220")
+        self.symbol_lbl.configure(text=cfg.symbol)
+        self.chart_title_lbl.configure(text=f"{cfg.timeframe} • {cfg.data_source.upper()} • {mode}")
+        self.ticket_title_lbl.configure(text=f"{cfg.symbol} • {cfg.timeframe} • {mode}")
+        stop_exists = (cfg.project_root / cfg.risk.kill_switch_file).exists()
+        self.stop_lbl.configure(text="STOP: ĐANG BẬT" if stop_exists else "STOP: TẮT",
+                                text_color=PALETTE["red"] if stop_exists else PALETTE["grey"])
+        self.stop_status_lbl.configure(
+            text=("STOP: ĐANG BẬT — app sẽ không chạy phiên mới." if stop_exists
+                  else "STOP: TẮT — app được phép chạy phiên."),
+            text_color=PALETTE["red"] if stop_exists else PALETTE["green"])
+        openai_ok, gemini_ok, claude_ok = self._key_status()
+        keys_text = ("Key: OpenAI " + ("✓ có" if openai_ok else "✗ thiếu")
+                     + " • Gemini " + ("✓ có" if gemini_ok else "✗ thiếu")
+                     + " • Claude " + ("✓ có" if claude_ok else "✗ thiếu")
+                     + "  (chỉ kiểm tra có/không, không hiện giá trị)")
+        self.keys_lbl.configure(text=keys_text)
+        self.keys_config_lbl.configure(text=keys_text)
+        self._set_entry(self.entries["symbol"], cfg.symbol)
+        self._set_entry(self.entries["timeframe"], cfg.timeframe)
+        self._set_entry(self.entries["mode"], cfg.mode)
+        self._set_entry(self.entries["allow_live"], str(cfg.allow_live).lower())
+        self._set_entry(self.entries["loop_interval_seconds"], str(cfg.loop_interval_seconds))
+        self.news_var.set(bool(cfg.news_enabled))
+        self.sentiment_var.set(bool(cfg.sentiment_enabled))
+        for field in EDITABLE_RISK_FIELDS:
+            if field in self.entries:
+                value = getattr(cfg.risk, field, "")
+                self._set_entry(self.entries[field], str(value))
+        agents = getattr(cfg, "agents", {}) or {}
+        providers = getattr(cfg, "providers", {}) or {}
+        for lbl, name in zip(self.agent_model_labels, AGENT_NAMES):
+            agent = agents.get(name)
+            if agent is not None:
+                if isinstance(agent, dict):
+                    provider = agent.get("provider", "—")
+                    model = agent.get("model")
+                else:
+                    provider, model = agent.provider, getattr(agent, "model", None)
+                if not model:
+                    prov = providers.get(provider)
+                    if isinstance(prov, dict):
+                        model = prov.get("model")
+                    elif prov is not None:
+                        model = getattr(prov, "model", None)
+                lbl.configure(text=f"{name}: {provider} • {model or '—'}")
+            else:
+                lbl.configure(text=f"{name}: —")
 
     def _load_history(self) -> None:
-        out = Path(self.output_dir)
-        self.history_list.delete(0, "end")
-        self._history_data = []
-        if not out.exists():
-            return
-        for path in sorted(out.glob("session_*.json"), reverse=True)[:30]:
+        output = Path(self.output_dir)
+        files = sorted(output.glob("session_*.json"), reverse=True) if output.exists() else []
+        self._history = []
+        counts = {"sessions": 0, "buy": 0, "sell": 0, "hold": 0, "pass": 0}
+        for path in files:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except Exception:
                 continue
-            self._history_data.append((path, data))
-            chief = data.get("chief", {})
-            self.history_list.insert("end", f"{data.get('timestamp_utc', '')} — {chief.get('direction', '')}")
-        buy = sum(1 for _p, d in self._history_data if d.get("chief", {}).get("direction") == "BUY")
-        sell = sum(1 for _p, d in self._history_data if d.get("chief", {}).get("direction") == "SELL")
-        hold = sum(1 for _p, d in self._history_data if d.get("chief", {}).get("direction") == "HOLD")
-        passed = sum(1 for _p, d in self._history_data if d.get("risk", {}).get("allowed"))
-        self.summary_vars["count"].set(str(len(self._history_data)))
-        self.summary_vars["buy"].set(str(buy))
-        self.summary_vars["sell"].set(str(sell))
-        self.summary_vars["hold"].set(str(hold))
-        self.summary_vars["pass"].set(str(passed))
-
-    def _on_history_select(self, _event) -> None:
-        sel = self.history_list.curselection()
-        if not sel:
+            self._history.append((str(path), data))
+            chief = data.get("chief") or {}
+            direction = str(chief.get("direction", "HOLD")).upper()
+            counts["sessions"] += 1
+            if direction == "BUY":
+                counts["buy"] += 1
+            elif direction == "SELL":
+                counts["sell"] += 1
+            else:
+                counts["hold"] += 1
+            if (data.get("risk") or {}).get("allowed"):
+                counts["pass"] += 1
+        for key, lbl in self.summary_labels.items():
+            lbl.configure(text=str(counts[key]))
+        for child in self.history_scroll.winfo_children():
+            child.destroy()
+        if not self._history:
+            _label(self.history_scroll, "Chưa có phiên nào được ghi.", size=12,
+                   color=PALETTE["muted"]).pack(anchor="w", padx=4, pady=4)
             return
-        path, data = self._history_data[sel[0]]
-        self.hist_summary_var.set(f"Phiên: {data.get('timestamp_utc', '')}  •  File: {path.name}  •  Lệnh: {data.get('order', '')}")
-        views = {v["name"]: v for v in data.get("views", [])}
-        chief = data.get("chief", {})
-        for name, widgets in self.hist_views.items():
-            view = views.get(name) if name != "chief" else chief
-            if not view:
-                continue
-            direction = view.get("direction", "—")
-            widgets["dir"].config(text=direction, fg=_direction_color(direction))
-            widgets["conf"].config(text=f"{int(float(view.get('confidence') or 0) * 100)}%")
-            self._draw_conf(widgets["bar"], view.get("confidence") or 0, _direction_color(direction))
-            self._current_views[name] = view
-            self._set_card(name, "Xem lại từ nhật ký", direction, view.get("confidence") or 0,
-                           view.get("reasoning", ""))
-        risk = data.get("risk", {})
-        checks = "\n".join(f"{'✓ PASS' if c['passed'] else '✕ FAIL'}  {c['name']}: {c['detail']}" for c in risk.get("checks", []))
-        chief_line = (f"Hướng: {chief.get('direction')}, tin cậy: {chief.get('confidence')}\n"
-                      f"Entry: {chief.get('entry_usd')} USD, SL: {chief.get('stop_loss_usd')} USD, TP: {chief.get('take_profit_usd')} USD\n")
-        _set_text(self.history_text, chief_line + "\n" + (checks or risk.get("reason", "")))
-        self.order_var.set(str(data.get("order", "")))
+        for index, (_path, data) in enumerate(self._history):
+            chief = data.get("chief") or {}
+            direction = str(chief.get("direction", "HOLD")).upper()
+            conf = int(float(chief.get("confidence") or 0.0) * 100)
+            verdict = "PASS" if (data.get("risk") or {}).get("allowed") else "CHẶN"
+            captured = str(data.get("timestamp_utc") or "")[:19]
+            row_btn = ctk.CTkButton(
+                self.history_scroll, text=f"{captured} — {direction} {conf}% • {verdict}",
+                font=F(12), anchor="w", fg_color="transparent",
+                hover_color=PALETTE["panel2"], text_color=PALETTE["text"], height=32,
+                command=lambda i=index: self._on_history_select(i))
+            row_btn.pack(fill="x", padx=2, pady=2)
+        self._on_history_select(0)
+
+    def _on_history_select(self, index: int) -> None:
+        if index < 0 or index >= len(self._history):
+            return
+        _path, data = self._history[index]
+        chief = data.get("chief") or {}
+        risk = data.get("risk") or {}
+        direction = str(chief.get("direction", "HOLD")).upper()
+        conf = float(chief.get("confidence") or 0.0)
+        verdict = "CHO PHÉP" if risk.get("allowed") else "CHẶN"
+        self.hist_summary_lbl.configure(
+            text=f"{data.get('timestamp_utc', '')} • {data.get('symbol', '')} "
+                 f"({data.get('timeframe', '')}) • "
+                 f"{direction} {int(conf * 100)}% • Rủi ro: {verdict} — {risk.get('reason', '')}")
+        views = {str(v.get("name")): v for v in data.get("views", [])}
+        views["chief"] = chief
+        self._current_views = views
+        for name, widgets in self.hist_cards.items():
+            view = views.get(name) or {}
+            view_dir = str(view.get("direction", "HOLD")).upper()
+            view_conf = float(view.get("confidence") or 0.0)
+            color = _direction_color(view_dir)
+            widgets["pill"].configure(text=view_dir, fg_color=color, text_color="#0B1220")
+            _set_bar(widgets["bar"], view_conf, color)
+            widgets["conf"].configure(text=f"{int(view_conf * 100)}%")
+        chief_entry = chief.get("entry", chief.get("entry_usd"))
+        chief_sl = chief.get("stop_loss", chief.get("stop_loss_usd"))
+        chief_tp = chief.get("take_profit", chief.get("take_profit_usd"))
+        chief_lines = [
+            str(chief.get("reasoning") or "Không có lý do."),
+            f"Entry {self._usd(chief_entry)} • SL {self._usd(chief_sl)} • TP {self._usd(chief_tp)}",
+            f"Vô hiệu khi: {chief.get('invalidation') or '—'}",
+        ]
+        _set_text(self.hist_chief_text, "\n".join(chief_lines))
+        _set_text(self.hist_checks_text, self._format_checks(risk.get("checks")))
+        self.hist_order_lbl.configure(text=str(data.get("order", "")))
+        # Đồng bộ khối trưởng phòng ở tab 1 theo phiên đang xem.
+        color = _direction_color(direction)
+        self.chief_title_lbl.configure(text=f"{direction} • CONF {int(conf * 100)}%",
+                                       fg_color=color, text_color="#0B1220")
+        _set_text(self.chief_text, "\n".join(chief_lines))
+
+    def _show_agent_detail(self, name: str) -> None:
+        info = AGENT_HOW[name]
+        view = self._current_views.get(name) or {}
+        snap = self._current_snapshot or {}
+        prompt_key = name if name in SYSTEM_PROMPTS else ("risk" if name == "risk_analyst" else name)
+        system_prompt = SYSTEM_PROMPTS.get(prompt_key, "(không có system prompt)")
+        parts = [
+            f"AI: {name} — {info['role']}",
+            f"Cách làm việc: {info['how']}",
+            "",
+            "SYSTEM PROMPT ĐÃ GỬI:",
+            system_prompt,
+            "",
+            "SNAPSHOT ĐÃ GỬI (trích):",
+            str(snap.get("prompt_text", ""))[:1500] or "(chưa có snapshot)",
+            "",
+            "CÂU TRẢ LỜI THÔ CỦA AI:",
+            str(view.get("raw_text") or view.get("raw") or "(chưa có câu trả lời)"),
+            "",
+            "LÝ DO (đã phân tích):",
+            str(view.get("reasoning") or "—"),
+            f"Bằng chứng: {view.get('evidence') or []}",
+        ]
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(f"Cách {name} làm việc")
+        dialog.geometry("760x560")
+        dialog.configure(fg_color=PALETTE["bg"])
+        text_box = _textbox(dialog, height=460)
+        text_box.pack(fill="both", expand=True, padx=12, pady=12)
+        _set_text(text_box, "\n".join(parts))
+        _button(dialog, "Đóng", dialog.destroy, color=PALETTE["panel2"], size=13, height=38).pack(
+            padx=12, pady=(0, 12))
+
+    def _save_config(self) -> None:
+        import shutil
+
+        import yaml
+
+        try:
+            cfg = load_config(self.config_path)
+            config_path = Path(self.config_path)
+            raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+            symbol = self.entries["symbol"].get().strip()
+            timeframe = self.entries["timeframe"].get().strip().upper()
+            if not symbol:
+                raise ValueError("Symbol không được để trống.")
+            if timeframe not in TIMEFRAMES:
+                raise ValueError(f"Khung thời gian phải là một trong: {', '.join(TIMEFRAMES)}.")
+            loop_interval = int(self.entries["loop_interval_seconds"].get().strip())
+            if loop_interval <= 0:
+                raise ValueError("Nghỉ giữa 2 phiên phải lớn hơn 0.")
+            risk_values = {}
+            for field, (low, high) in EDITABLE_RISK_FIELDS.items():
+                value = float(self.entries[field].get().strip())
+                if not low <= value <= high:
+                    raise ValueError(f"{field} phải trong khoảng {low} – {high}.")
+                risk_values[field] = value
+            if config_path.exists():
+                shutil.copy2(config_path, config_path.with_suffix(".yaml.bak"))
+            raw["symbol"] = symbol
+            raw["timeframe"] = timeframe
+            raw["loop_interval_seconds"] = loop_interval
+            raw["news_enabled"] = bool(self.news_var.get())
+            raw["sentiment_enabled"] = bool(self.sentiment_var.get())
+            raw.setdefault("risk", {}).update(risk_values)
+            header = ("# Cấu hình phòng trade AI — sửa bằng app desktop, "
+                      "bản cũ lưu ở config.yaml.bak\n")
+            config_path.write_text(header + yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
+                                   encoding="utf-8")
+            load_config(self.config_path)  # kiểm tra đọc lại được
+            self.config_msg_lbl.configure(text="Đã lưu cấu hình (backup: config.yaml.bak).",
+                                          text_color=PALETTE["green"])
+            self._refresh_status()
+        except Exception as exc:
+            self.config_msg_lbl.configure(text=f"Không lưu được: {exc}", text_color=PALETTE["red"])
+            messagebox.showerror("Không lưu được cấu hình", str(exc))
+
+    def _open_env(self) -> None:
+        try:
+            cfg = load_config(self.config_path)
+            env_path = cfg.project_root / ".env"
+            if not env_path.exists():
+                messagebox.showinfo("Chưa có .env",
+                                    "Chưa có file .env. Copy .env.example thành .env rồi mở lại.")
+                return
+            if os.name == "nt":
+                os.startfile(str(env_path))  # noqa: S606 - file do chính user tạo
+            else:
+                import subprocess
+
+                subprocess.run(["xdg-open", str(env_path)], check=False)
+        except Exception as exc:
+            messagebox.showerror("Lỗi", str(exc))
+
+    def _open_output(self) -> None:
+        try:
+            output = Path(self.output_dir).resolve()
+            output.mkdir(parents=True, exist_ok=True)
+            if os.name == "nt":
+                os.startfile(str(output))  # noqa: S606 - thư mục output của app
+            else:
+                import subprocess
+
+                subprocess.run(["xdg-open", str(output)], check=False)
+        except Exception as exc:
+            messagebox.showerror("Lỗi", str(exc))
 
     def _on_close(self) -> None:
-        self.runner.stop()
+        try:
+            self.runner.stop()
+        except Exception:
+            pass
         try:
             self.live.stop()
         except Exception:
@@ -1368,22 +1697,24 @@ class DesktopApp(tk.Tk):
         self.destroy()
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(config_path: str = "config.yaml", output_dir: str = "output") -> None:
     import argparse
 
-    parser = argparse.ArgumentParser(description="App desktop cho phòng trade AI")
-    parser.add_argument("--config", default="config.yaml")
-    parser.add_argument("--output-dir", default="output")
-    args = parser.parse_args(argv)
+    parser = argparse.ArgumentParser(description="App desktop Terminal Pro (CustomTkinter)")
+    parser.add_argument("--config", default=config_path)
+    parser.add_argument("--output-dir", default=output_dir)
+    args = parser.parse_args()
     try:
-        app = DesktopApp(args.config, output_dir=args.output_dir)
-    except tk.TclError as exc:
-        print(f"Không mở được cửa sổ Tkinter: {exc}")
-        print("Trên Windows, cài Python từ python.org (bản có kèm Tkinter) rồi chạy lại.")
-        return 1
-    app.mainloop()
-    return 0
+        app = DesktopApp(config_path=args.config, output_dir=args.output_dir)
+    except Exception as exc:
+        print(f"Không mở được app desktop: {exc}")
+        print("Cài thêm giao diện: py -3.13 -m pip install -r requirements.txt")
+        raise
+    try:
+        app.mainloop()
+    except tk.TclError:
+        pass
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

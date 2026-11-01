@@ -1,6 +1,6 @@
 # Phòng trade AI — Mô tả vận hành, giao diện demo và các chức năng chính
 
-- **Phiên bản:** v1.4 (app desktop, theo yêu cầu ngày 2026-11-01: app đầy đủ giao diện, bấm là mở), trước đó v1.3 giao diện web local, v1.2 theo plan `ai_trading_room_plan.md` (thêm News, Sentiment, Portfolio Manager; TP chỉ tính bằng USD, không dùng pips), làm ở local ngày 2026-11-01, chưa đẩy lên repo trong lần sửa này.
+- **Phiên bản:** v1.4 (app desktop, theo yêu cầu ngày 2026-11-01: app đầy đủ giao diện, bấm là mở), trước đó v1.3 giao diện web local, v1.2 theo plan `ai_trading_room_plan.md` (thêm News, Sentiment, Portfolio Manager; TP chỉ tính bằng USD, không dùng pips), làm ở local ngày 2026-11-01, chưa đẩy lên repo trong lần sửa này. Bản viết lại app desktop bằng CustomTkinter theo ảnh demo (ngày 2026-11-02, sau khi Thái chê bản Tkinter "xấu hết") cũng chỉ ở local, chưa đẩy.
 - **Thị trường:** XAUUSD, khung chính tạm là M15 trong `config.yaml`, chờ Thái chốt M15 hay H1.
 - **Nhà cung cấp AI đã chốt:** OpenAI + Gemini + Claude (Thái nói có đủ key ngày 2026-11-01). Phân vai và model theo plan, xem mục 3.
 - **Đơn vị giá bắt buộc:** mọi entry, stop loss, take profit đều là giá tuyệt đối tính bằng USD/oz. KHÔNG dùng pips, KHÔNG dùng điểm.
@@ -423,10 +423,14 @@ và `trading_room/web_ui/index.html`):
 ### 9.3. App desktop — đã code từ v1.4 (cách dùng chính, dễ nhất)
 
 Thái muốn app đầy đủ giao diện, chỉ cần bấm vào là hiện đầy đủ thông tin và
-thấy rõ các AI đang làm gì. App desktop dùng Tkinter (thư viện chuẩn của
-Python, không cài thêm gì), code ở `trading_room/desktop_app.py`, chạy bằng
+thấy rõ các AI đang làm gì. App desktop dùng CustomTkinter (thư viện giao
+diện hiện đại xây trên Tkinter: góc bo tròn, thẻ nổi, nút lớn, giống ảnh
+demo Terminal Pro; Tkinter cổ điển không vẽ được kiểu này nên bản trước dù
+sửa bố cục vẫn bị chê xấu), code ở `trading_room/desktop_app.py`, chạy bằng
 cách **bấm đúp file `run_app.bat`** ở thư mục gốc của dự án, hoặc
 `py -3.13 main.py --app`. Không cần mở trình duyệt, không cần gõ lệnh.
+Lần đầu chạy trên máy Windows phải cài thêm thư viện 1 lần:
+`py -3.13 -m pip install -r requirements.txt`.
 Muốn có biểu tượng trên màn hình desktop: bấm chuột phải vào `run_app.bat`
 > Send to > Desktop (create shortcut), rồi đổi tên shortcut thành
 "Phòng trade AI".
@@ -449,7 +453,7 @@ App mở thành 1 cửa sổ với 3 tab:
   và sentiment, lưu kèm bản sao `config.yaml.bak`; hiện trạng thái key
   (có/không có, không hiện giá trị), nút mở `.env` bằng Notepad.
 
-Bản Terminal Pro (chỉ ở local, chưa đẩy, theo ảnh demo lựa chọn 2 ngày 2026-11-02, Thái tự sửa tiếp): thanh market watch và biểu đồ nến chạy theo thời gian thực — luồng nền hỏi tick MT5 mỗi 2 giây và nến mới mỗi ~10 giây, cập nhật giá/spread/số dư/equity và nến cuối đang chạy; luồng realtime tạm dừng trong lúc 1 phiên AI chạy rồi tự nối lại. Thanh tab nằm ở dưới cùng, bảng màu tập trung ở dict `PALETTE` đầu file `desktop_app.py` (sửa 1 chỗ là đổi cả app), khối trưởng phòng dùng panel tối, không nền nâu. Nến OHLCV lấy từ MT5 qua `MT5DataProvider.get_candles()` và ghi vào `MarketSnapshot.candles`; file JSON thử không có nến thì biểu đồ trống, không bịa nến.
+Bản Terminal Pro viết lại bằng CustomTkinter (chỉ ở local, chưa đẩy, theo ảnh demo lựa chọn 2 ngày 2026-11-02, Thái tự sửa tiếp; Thái chê bản Tkinter trước "xấu hết" và yêu cầu làm lại giống ảnh demo): thanh market watch và biểu đồ nến chạy theo thời gian thực — luồng nền hỏi tick MT5 mỗi 2 giây và nến mới mỗi ~10 giây, cập nhật giá/spread/số dư/equity và nến cuối đang chạy; luồng realtime tạm dừng trong lúc 1 phiên AI chạy rồi tự nối lại. Thanh tab nằm ở dưới cùng, bảng màu tập trung ở dict `PALETTE` đầu file `desktop_app.py` (sửa 1 chỗ là đổi cả app), khối trưởng phòng dùng panel tối, không nền nâu. Nến OHLCV lấy từ MT5 qua `MT5DataProvider.get_candles()` và ghi vào `MarketSnapshot.candles`; file JSON thử không có nến thì biểu đồ trống, không bịa nến. Font: hàm `_font_family()` chọn Segoe UI trên Windows (DejaVu Sans trên Linux), mỗi widget tạo `CTkFont` riêng qua `F()`; biểu đồ Canvas dùng cùng family qua `chart.font_family`. Panel trưởng phòng cố định ở đáy cột giữa (luôn nhìn thấy), 6 thẻ AI phân tích cuộn phía trên; chỉ báo kỹ thuật hiện từng dòng riêng (khóa chỉ báo đúng của MT5: `rsi14`, `atr14_usd`, `macd` là chuỗi, Bollinger `bollinger_*_usd`); order ticket không giãn hàng. Tab lịch sử tự chọn phiên mới nhất và đọc đúng định dạng file nhật ký thật (snapshot là chuỗi prompt, thời gian ở `timestamp_utc`, trưởng phòng dùng khóa `entry_usd`/`stop_loss_usd`/`take_profit_usd`, câu trả lời thô ở khóa `raw`); kiểm tra cửa rủi ro đọc khóa `passed` của `risk.py`. Lỗi MT5 cũ ở thanh trạng thái được xóa khi tick mới về; luồng realtime thử nối lại mỗi 5 giây nếu lúc mở app terminal chưa đăng nhập xong. Một payload hiển thị lỗi không giết vòng lặp sự kiện nữa (`_poll_events` bắt lỗi và hẹn quét tiếp).
 
 Nút "Xem cách AI này làm việc" mở cửa sổ riêng giải thích đúng AI đó làm gì,
 đọc dữ liệu nào, lệnh hệ thống (system prompt) đã gửi, snapshot đã gửi trong
@@ -513,7 +517,7 @@ ai_trading_room/
     risk.py
     executor.py
     journal.py
-    desktop_app.py         # app desktop Tkinter, chỉ stdlib
+    desktop_app.py         # app desktop CustomTkinter (cần pip install customtkinter)
     web_ui.py              # máy chủ web local, chỉ stdlib
     web_ui/
       index.html         # giao diện 1 trang, tiếng Việt

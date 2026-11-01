@@ -246,7 +246,11 @@ class MT5DataProvider:
             # Terminal đã đăng nhập sẵn thì initialize() không tham số sẽ bám vào đó.
             ok = mt5.initialize()
         if not ok:
-            raise RuntimeError(f"MT5 initialize thất bại: {mt5.last_error()}")
+            raise RuntimeError(
+                f"MT5 initialize thất bại: {mt5.last_error()}. Kiểm tra: terminal MT5 "
+                "đang mở và đã đăng nhập đúng tài khoản; nếu .env có MT5_LOGIN/PASSWORD/SERVER "
+                "thì 3 giá trị đó phải khớp đúng tài khoản đang đăng nhập trong terminal."
+            )
         if not mt5.symbol_select(self.cfg.symbol, True):
             raise RuntimeError(
                 f"Không chọn được symbol {self.cfg.symbol} trên MT5. "

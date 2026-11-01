@@ -32,6 +32,11 @@ class MarketSnapshot:
     account_balance: float = 0.0
     account_equity: float = 0.0
     notes: str = ""
+    # Nến OHLCV để vẽ biểu đồ trong app desktop. Mỗi nến là dict:
+    # {"time": int, "open": float, "high": float, "low": float,
+    #  "close": float, "volume": float}. Chỉ có khi lấy từ MT5; file JSON
+    # thử thường không có nến thì biểu đồ trống, không bịa nến.
+    candles: list = field(default_factory=list)
 
     @property
     def price(self) -> float:
@@ -61,6 +66,19 @@ class MarketSnapshot:
 
 def load_snapshot(path: str | Path) -> MarketSnapshot:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
+    candles = []
+    for row in data.get("candles", []) or []:
+        try:
+            candles.append({
+                "time": int(row.get("time", 0)),
+                "open": float(row["open"]),
+                "high": float(row["high"]),
+                "low": float(row["low"]),
+                "close": float(row["close"]),
+                "volume": float(row.get("volume", row.get("tick_volume", 0.0)) or 0.0),
+            })
+        except (KeyError, TypeError, ValueError):
+            continue
     return MarketSnapshot(
         symbol=data["symbol"],
         timeframe=data.get("timeframe", "M15"),
@@ -76,6 +94,7 @@ def load_snapshot(path: str | Path) -> MarketSnapshot:
         account_balance=float(data.get("account_balance", 0.0)),
         account_equity=float(data.get("account_equity", data.get("account_balance", 0.0))),
         notes=data.get("notes", ""),
+        candles=candles,
     )
 
 

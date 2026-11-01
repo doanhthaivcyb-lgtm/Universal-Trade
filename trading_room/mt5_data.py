@@ -88,6 +88,60 @@ def _rates_to_lists(rates):
     return highs, lows, closes, times
 
 
+def _rates_to_candles(rates) -> list[dict]:
+    """Chuyển kết quả copy_rates_from_pos thành list nến OHLCV cho biểu đồ.
+
+    Hỗ trợ cùng 4 dạng như _rates_to_lists: numpy structured array, list
+    dict, namedtuple/object và tuple. Nến thiếu open/volume thì open lấy
+    bằng close, volume lấy 0 — không bịa giá, chỉ điền chỗ trống để vẽ.
+    """
+    candles: list[dict] = []
+    if rates is None:
+        return candles
+    dtype = getattr(rates, "dtype", None)
+    names = getattr(dtype, "names", None)
+    if names:
+        for row in rates:
+            candles.append({
+                "time": int(row["time"]),
+                "open": float(row["open"]),
+                "high": float(row["high"]),
+                "low": float(row["low"]),
+                "close": float(row["close"]),
+                "volume": float(row["tick_volume"]) if "tick_volume" in names else 0.0,
+            })
+        return candles
+    for row in rates:
+        if isinstance(row, dict):
+            candles.append({
+                "time": int(row.get("time", 0)),
+                "open": float(row.get("open", row["close"])),
+                "high": float(row["high"]),
+                "low": float(row["low"]),
+                "close": float(row["close"]),
+                "volume": float(row.get("tick_volume", row.get("volume", 0.0)) or 0.0),
+            })
+        elif hasattr(row, "high"):  # namedtuple / object
+            candles.append({
+                "time": int(getattr(row, "time", 0)),
+                "open": float(getattr(row, "open", row.close)),
+                "high": float(row.high),
+                "low": float(row.low),
+                "close": float(row.close),
+                "volume": float(getattr(row, "tick_volume", 0.0) or 0.0),
+            })
+        else:  # tuple: time, open, high, low, close, tick_volume, ...
+            candles.append({
+                "time": int(row[0]),
+                "open": float(row[1]),
+                "high": float(row[2]),
+                "low": float(row[3]),
+                "close": float(row[4]),
+                "volume": float(row[5]) if len(row) > 5 else 0.0,
+            })
+    return candles
+
+
 def _position_field(pos, name: str, default=0.0):
     if hasattr(pos, name):
         return getattr(pos, name)
@@ -208,6 +262,37 @@ class MT5DataProvider:
             finally:
                 self._connected = False
 
+    def get_tick(self) -> dict | None:
+        """Tick mới nhất cho market watch realtime. Trả về None nếu chưa có giá.
+
+        Không raise, để luồng realtime chỉ hiện 'chưa kết nối' thay vì crash.
+        """
+        if not self._connected:
+            self.connect()
+        tick = self.mt5.symbol_info_tick(self.cfg.symbol)
+        if tick is None:
+            return None
+        return {"bid": float(tick.bid), "ask": float(tick.ask)}
+
+    def get_candles(self) -> list[dict]:
+        """Nến OHLCV mới nhất cho biểu đồ. Kết nối 1 lần rồi dùng lại."""
+        if not self._connected:
+            self.connect()
+        rates = self.mt5.copy_rates_from_pos(
+            self.cfg.symbol, _timeframe_constant(self.mt5, self.cfg.timeframe), 0, self.cfg.mt5_candles
+        )
+        return _rates_to_candles(rates)
+
+    def get_account(self) -> dict:
+        """Số dư/equity hiện tại cho market watch. Lỗi thì trả về 0, không bịa."""
+        if not self._connected:
+            self.connect()
+        account = self.mt5.account_info()
+        if account is None:
+            return {"balance": 0.0, "equity": 0.0}
+        balance = float(account.balance)
+        return {"balance": balance, "equity": float(getattr(account, "equity", balance))}
+
     def build_snapshot(self) -> MarketSnapshot:
         if not self._connected:
             self.connect()
@@ -221,7 +306,10 @@ class MT5DataProvider:
         rates = mt5.copy_rates_from_pos(
             self.cfg.symbol, _timeframe_constant(mt5, self.cfg.timeframe), 0, self.cfg.mt5_candles
         )
-        highs, lows, closes, _times = _rates_to_lists(rates)
+        candles = _rates_to_candles(rates)
+        highs = [c["high"] for c in candles]
+        lows = [c["low"] for c in candles]
+        closes = [c["close"] for c in candles]
         if len(closes) < 30:
             raise RuntimeError(
                 f"MT5 chỉ trả về {len(closes)} nến, cần ít nhất 30 nến để tính chỉ báo. "
@@ -266,6 +354,7 @@ class MT5DataProvider:
             daily_loss_usd=_daily_loss_usd(mt5),
             account_balance=float(account.balance) if account is not None else 0.0,
             account_equity=float(getattr(account, "equity", account.balance)) if account is not None else 0.0,
+            candles=candles,
             notes=(
                 f"Lấy trực tiếp từ MT5 realtime: tick bid/ask mới nhất và "
                 f"{len(closes)} nến {self.cfg.timeframe}. Danh mục toàn tài khoản: "

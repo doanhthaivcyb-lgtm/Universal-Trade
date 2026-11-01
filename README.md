@@ -21,7 +21,7 @@ Mọi entry, stop loss, take profit đều tính bằng USD/oz, không dùng pip
 
 ## App desktop (cách dùng dễ nhất: bấm đúp là mở)
 
-Bấm đúp file `run_app.bat` trong thư mục dự án. App mở thành 1 cửa sổ hiện đầy đủ dữ liệu MT5, tin tức, sentiment, danh mục, từng AI đang làm gì ở từng bước, nút xem cách mỗi AI làm việc, kết luận trưởng phòng, 10 kiểm tra cửa rủi ro, lịch sử phiên và cấu hình an toàn. Muốn có biểu tượng trên màn hình desktop: bấm chuột phải vào `run_app.bat` > Send to > Desktop (create shortcut). Lệnh tương đương: `py -3.13 main.py --app`. Chi tiết xem [MO_TA_VAN_HANH.md](MO_TA_VAN_HANH.md) mục 9.3.
+Bấm đúp file `run_app.bat` trong thư mục dự án. App mở thành 1 cửa sổ Terminal Pro hiện biểu đồ nến và market watch chạy theo thời gian thực từ MT5, tin tức, sentiment, danh mục, từng AI đang làm gì ở từng bước, nút xem cách mỗi AI làm việc, kết luận trưởng phòng, 10 kiểm tra cửa rủi ro, lịch sử phiên và cấu hình an toàn. Bảng màu nằm ở dict `PALETTE` đầu file `trading_room/desktop_app.py`. Muốn có biểu tượng trên màn hình desktop: bấm chuột phải vào `run_app.bat` > Send to > Desktop (create shortcut). Lệnh tương đương: `py -3.13 main.py --app`. Chi tiết xem [MO_TA_VAN_HANH.md](MO_TA_VAN_HANH.md) mục 9.3.
 
 ## Giao diện web local (dễ dùng hơn dòng lệnh)
 

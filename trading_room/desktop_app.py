@@ -1,13 +1,24 @@
-"""App desktop (Tkinter, chỉ dùng thư viện chuẩn) cho phòng trade AI.
+"""App desktop Terminal Pro (Tkinter, chỉ dùng thư viện chuẩn) cho phòng trade AI.
+
+Bản vẽ theo ảnh demo Terminal Pro mà Thái đã chốt (lựa chọn 2): nền navy
+tối, tiêu đề teal nhạt, nút chính xanh dương, dừng khẩn cấp đỏ, Gỡ STOP cam,
+LONG xanh lá, SHORT đỏ, HOLD/CAUTION vàng. Bảng màu nằm ở PALETTE ngay dưới
+đây để Thái tự sửa 1 chỗ là đổi cả app — không sửa màu rải rác từng widget.
+
+Bố cục 3 tab, thanh tab ở DƯỚI cùng (như ảnh trước), thanh market watch ở
+trên cùng: tab 1 Phòng trade (biểu đồ nến + AI feed + order ticket), tab 2
+Nhật ký & lịch sử, tab 3 Cấu hình & an toàn. Khối quyết định trưởng phòng
+dùng panel tối như các panel khác, KHÔNG dùng nền nâu/vàng nâu.
+
+Biểu đồ + market watch chạy theo thời gian thực: luồng LiveFeed hỏi tick MT5
+mỗi 2 giây và nến mới mỗi ~10 giây, cập nhật giá/spread/số dư/equity và nến
+cuối đang chạy. MT5 Python API không tự đẩy giá, nên đây là hỏi theo chu kỳ,
+không phải từng mili giây. Luồng realtime tạm dừng trong lúc 1 phiên AI đang
+chạy (để không tranh kết nối MT5 với phiên), chạy xong tự nối lại.
 
 Chạy bằng cách bấm đúp file ``run_app.bat`` ở thư mục gốc của dự án, hoặc:
     py -3.13 main.py --app
     py -3.13 -m trading_room.desktop_app
-
-App mở thành 1 cửa sổ trên máy Windows, không cần trình duyệt, không cần
-gõ lệnh. App hiện đầy đủ: dữ liệu MT5, tin tức, sentiment, danh mục, từng
-AI đang làm gì ở từng bước, cách mỗi AI làm việc, kết luận trưởng phòng,
-từng kiểm tra của cửa rủi ro, nhật ký các phiên, và cấu hình an toàn.
 
 An toàn giống bản web: app không bao giờ hiện giá trị key trong .env, chỉ
 hiện có/không có key; không cho sửa key, không cho đổi sang chế độ live;
@@ -24,7 +35,7 @@ import time
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import messagebox
 
 from .agents import SYSTEM_PROMPTS
 from .config import load_config
@@ -37,45 +48,71 @@ from .web_ui import EDITABLE_RISK_FIELDS, TIMEFRAMES
 
 AGENT_NAMES = ANALYST_NAMES + ["chief"]
 
+# Bảng màu Terminal Pro — Thái tự sửa ở đây, mọi widget lấy màu từ đây.
+PALETTE = {
+    "bg": "#0B1220",        # nền cửa sổ: navy rất tối
+    "panel": "#141E30",     # nền panel
+    "panel2": "#1B2740",    # nền panel nổi hơn 1 bậc / ô nhập liệu
+    "border": "#24344D",    # viền panel
+    "text": "#F1F5F9",      # chữ chính
+    "muted": "#94A3B8",     # chữ phụ
+    "cyan": "#5EEAD4",      # tiêu đề, nhấn teal nhạt
+    "blue": "#2563EB",      # nút chính, tab đang chọn
+    "green": "#22C55E",     # BUY / LONG / PASS
+    "red": "#EF4444",       # SELL / SHORT / FAIL
+    "amber": "#F59E0B",     # HOLD / NEUTRAL / CAUTION
+    "orange": "#EA580C",    # nút Gỡ STOP
+    "danger": "#DC2626",    # nút dừng khẩn cấp
+    "purple": "#A855F7",    # badge Portfolio Manager
+    "grey": "#64748B",      # trạng thái chờ / chưa có
+}
+
 AGENT_HOW = {
     "technical": {
         "role": "Phân tích kỹ thuật",
         "how": "Đọc xu hướng, cấu trúc giá, hỗ trợ/kháng cự, RSI, MACD, ATR, EMA và Bollinger trong snapshot. Không đọc tin vĩ mô.",
+        "badge": PALETTE["blue"],
     },
     "fundamental": {
         "role": "Phân tích cơ bản",
         "how": "Chỉ dùng tin tức và lịch kinh tế đã lấy được trong snapshot (lịch ForexFactory, RSS Fed). Không có tin mới thì nói rõ, không bịa số liệu.",
+        "badge": PALETTE["amber"],
     },
     "sentiment": {
         "role": "Phân tích tâm lý và dòng tiền",
         "how": "Đọc COT vàng (ghi rõ ngày báo cáo, luôn cũ vài ngày) và điểm từ khóa tiêu đề tin tức. Điểm từ khóa không phải Fear & Greed thật.",
+        "badge": PALETTE["grey"],
     },
     "contrarian": {
         "role": "AI phản biện",
         "how": "Tìm điểm yếu nhất của phe đa số, kịch bản ngược chiều và điểm vô hiệu. Không đồng thuận cho có.",
+        "badge": PALETTE["red"],
     },
     "risk_analyst": {
         "role": "Quản trị rủi ro (tư vấn)",
         "how": "Đánh giá spread, biến động, giờ tin và hậu quả nếu stop bị quét. Không quyết lot, code sẽ quyết.",
+        "badge": PALETTE["amber"],
     },
     "portfolio_manager": {
         "role": "Quản lý danh mục",
         "how": "Đánh giá exposure toàn tài khoản, mức tập trung vào vàng và rủi ro nếu cộng thêm 1 lệnh. Không quyết lot, code sẽ quyết.",
+        "badge": PALETTE["purple"],
     },
     "chief": {
         "role": "Trưởng phòng giao dịch",
         "how": "Đọc tất cả ý kiến vòng 2, cân nhắc cả phản biện và danh mục, ra 1 quyết định cuối duy nhất. Mâu thuẫn mạnh hoặc bằng chứng yếu thì HOLD.",
+        "badge": PALETTE["cyan"],
     },
 }
 
 STEPS = [
-    "1. Lấy dữ liệu MT5",
-    "2. Lấy tin tức + COT",
-    "3. Vòng 1: phân tích độc lập",
-    "4. Vòng 2: tranh luận",
-    "5. Trưởng phòng tổng hợp",
-    "6. Cửa rủi ro cứng",
-    "7. Executor + nhật ký",
+    "1. Khởi tạo",
+    "2. Kết nối",
+    "3. Tải dữ liệu",
+    "4. Chuẩn bị chỉ báo",
+    "5. AI thảo luận",
+    "6. Kiểm định rủi ro",
+    "7. Sẵn sàng",
 ]
 
 
@@ -101,6 +138,7 @@ def _snapshot_to_dict(snapshot) -> dict:
         "open_positions": snapshot.open_positions, "daily_loss_usd": snapshot.daily_loss_usd,
         "account_balance": snapshot.account_balance, "account_equity": snapshot.account_equity,
         "notes": snapshot.notes, "prompt_text": snapshot.to_prompt_text(),
+        "candles": list(getattr(snapshot, "candles", []) or []),
     }
 
 
@@ -112,6 +150,26 @@ def _build_snapshot(cfg, source: str, snapshot_path: str):
         finally:
             provider.close()
     return load_snapshot(snapshot_path)
+
+
+def _ema_series(values: list[float], period: int) -> list[float]:
+    if not values:
+        return []
+    k = 2 / (period + 1)
+    out = [values[0]]
+    for v in values[1:]:
+        out.append(v * k + out[-1] * (1 - k))
+    return out
+
+
+def _direction_color(direction: str) -> str:
+    if direction == "BUY":
+        return PALETTE["green"]
+    if direction == "SELL":
+        return PALETTE["red"]
+    if direction == "HOLD":
+        return PALETTE["amber"]
+    return PALETTE["grey"]
 
 
 class SessionRunner:
@@ -232,6 +290,262 @@ class SessionRunner:
         threading.Thread(target=_job, daemon=True).start()
 
 
+class LiveFeed:
+    """Hỏi tick + nến MT5 theo chu kỳ cho market watch và biểu đồ realtime.
+
+    MT5 Python API không tự đẩy giá sang, nên luồng này hỏi lại mỗi 2 giây
+    (tick) và mỗi ~10 giây (nến + tài khoản). Khi phiên AI đang chạy thì
+    luồng tạm dừng để không tranh kết nối MT5; chạy xong tự nối lại.
+    """
+
+    TICK_INTERVAL = 2.0
+    CANDLES_EVERY = 5  # số lần hỏi tick thì hỏi nến 1 lần
+
+    def __init__(self, config_path: str, events: queue.Queue):
+        self.config_path = config_path
+        self.events = events
+        self._stop = threading.Event()
+        self._paused = threading.Event()
+        self._reconnect = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._error_sent = False
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=3.0)
+
+    def pause(self) -> None:
+        self._paused.set()
+
+    def resume(self) -> None:
+        self._reconnect.set()
+        self._paused.clear()
+
+    def _run(self) -> None:
+        try:
+            cfg = load_config(self.config_path)
+            provider = MT5DataProvider(cfg)
+        except Exception as exc:
+            self.events.put(("live_error", str(exc)))
+            return
+        try:
+            provider.connect()
+        except Exception as exc:
+            self.events.put(("live_error", str(exc)))
+            return
+        count = 0
+        while not self._stop.is_set():
+            if self._paused.is_set():
+                if self._stop.wait(timeout=0.2):
+                    break
+                continue
+            if self._reconnect.is_set():
+                self._reconnect.clear()
+                try:
+                    provider.close()
+                    provider.connect()
+                except Exception:
+                    pass
+            try:
+                tick = provider.get_tick()
+                if tick is None:
+                    # Tick rỗng: nối lại 1 lần, lần sau vẫn rỗng thì chờ kỳ sau.
+                    try:
+                        provider.close()
+                        provider.connect()
+                        tick = provider.get_tick()
+                    except Exception:
+                        tick = None
+                if tick is not None:
+                    self._error_sent = False
+                    payload = {"bid": tick["bid"], "ask": tick["ask"]}
+                    count += 1
+                    if count % self.CANDLES_EVERY == 1:
+                        try:
+                            payload["candles"] = provider.get_candles()
+                            payload.update(provider.get_account())
+                        except Exception:
+                            pass
+                    self.events.put(("tick", payload))
+                elif not self._error_sent:
+                    self._error_sent = True
+                    self.events.put(("live_error", "Không đọc được tick MT5. Kiểm tra terminal MT5 có đang mở và đã đăng nhập không."))
+            except Exception as exc:
+                if not self._error_sent:
+                    self._error_sent = True
+                    self.events.put(("live_error", str(exc)))
+                try:
+                    provider.close()
+                    provider.connect()
+                except Exception:
+                    pass
+            if self._stop.wait(timeout=self.TICK_INTERVAL):
+                break
+        try:
+            provider.close()
+        except Exception:
+            pass
+
+
+class CandleChart(tk.Canvas):
+    """Biểu đồ nến vẽ bằng Canvas, chỉ dùng thư viện chuẩn.
+
+    Vẽ nến OHLC, đường EMA20/EMA50, hỗ trợ/kháng cự, cột volume và đường
+    giá cuối. Nến cuối cập nhật theo tick mà không cần tải lại toàn bộ nến.
+    """
+
+    def __init__(self, master, **kwargs):
+        super().__init__(master, bg=PALETTE["bg"], highlightthickness=0, **kwargs)
+        self.candles: list[dict] = []
+        self.support: list[float] = []
+        self.resistance: list[float] = []
+        self.visible = 100
+        self.bind("<Configure>", lambda _e: self.draw())
+
+    def set_candles(self, candles: list[dict], support=None, resistance=None) -> None:
+        self.candles = [dict(c) for c in (candles or [])]
+        self.support = list(support or [])
+        self.resistance = list(resistance or [])
+        self.draw()
+
+    def update_tick(self, bid: float, ask: float) -> None:
+        if not self.candles:
+            return
+        price = (bid + ask) / 2
+        last = self.candles[-1]
+        last["close"] = price
+        last["high"] = max(last["high"], price)
+        last["low"] = min(last["low"], price)
+        self.draw()
+
+    def draw(self) -> None:
+        self.delete("all")
+        width = self.winfo_width()
+        height = self.winfo_height()
+        if width < 60 or height < 60:
+            return
+        if not self.candles:
+            self.create_text(width / 2, height / 2, fill=PALETTE["muted"],
+                             text="Chưa có nến — bấm “Làm mới MT5” hoặc “Chạy 1 phiên” (nguồn mt5).",
+                             font=("", 10))
+            return
+        visible = self.candles[-self.visible:]
+        plot_h = height * 0.78
+        vol_h = height * 0.18
+        vol_top = plot_h + 8
+        lo = min(c["low"] for c in visible)
+        hi = max(c["high"] for c in visible)
+        for level in self.support + self.resistance:
+            lo = min(lo, level)
+            hi = max(hi, level)
+        if hi <= lo:
+            hi = lo + 1.0
+        pad = (hi - lo) * 0.06
+        hi += pad
+        lo -= pad
+
+        def y_of(price: float) -> float:
+            return 8 + (hi - price) / (hi - lo) * (plot_h - 16)
+
+        def x_of(i: int) -> float:
+            return 8 + (i + 0.5) * (width - 16) / len(visible)
+
+        step = (width - 16) / len(visible)
+        body_w = max(2.0, step * 0.65)
+        max_vol = max((c.get("volume", 0.0) or 0.0) for c in visible) or 1.0
+        closes = [c["close"] for c in self.candles]
+        ema20 = _ema_series(closes, 20)
+        ema50 = _ema_series(closes, 50)
+        offset = len(self.candles) - len(visible)
+        for i, c in enumerate(visible):
+            x = x_of(i)
+            color = PALETTE["green"] if c["close"] >= c["open"] else PALETTE["red"]
+            self.create_line(x, y_of(c["high"]), x, y_of(c["low"]), fill=color, width=1)
+            top = y_of(max(c["open"], c["close"]))
+            bottom = y_of(min(c["open"], c["close"]))
+            self.create_rectangle(x - body_w / 2, top, x + body_w / 2, max(bottom, top + 1),
+                                  fill=color, outline=color)
+            vol = (c.get("volume", 0.0) or 0.0) / max_vol * vol_h
+            self.create_rectangle(x - body_w / 2, vol_top + vol_h - vol, x + body_w / 2,
+                                  vol_top + vol_h, fill=color, outline=color, stipple="gray50")
+        for series, color in ((ema20, "#FACC15"), (ema50, "#FB923C")):
+            points = []
+            for i in range(len(visible)):
+                points += [x_of(i), y_of(series[offset + i])]
+            if len(points) >= 4:
+                self.create_line(points, fill=color, width=1)
+        for level in self.support:
+            self.create_line(8, y_of(level), width - 8, y_of(level), fill="#3B82F6", dash=(4, 3))
+            self.create_text(width - 10, y_of(level) - 8, text=f"{level:.2f}", fill="#3B82F6",
+                             anchor="e", font=("", 8))
+        for level in self.resistance:
+            self.create_line(8, y_of(level), width - 8, y_of(level), fill=PALETTE["red"], dash=(4, 3))
+            self.create_text(width - 10, y_of(level) - 8, text=f"{level:.2f}", fill=PALETTE["red"],
+                             anchor="e", font=("", 8))
+        last_price = visible[-1]["close"]
+        self.create_line(8, y_of(last_price), width - 8, y_of(last_price), fill=PALETTE["cyan"], dash=(2, 2))
+        self.create_text(width - 10, y_of(last_price) + 10, text=f"{last_price:.2f}",
+                         fill=PALETTE["cyan"], anchor="e", font=("", 9, "bold"))
+        self.create_text(10, height - 6, text="VOLUME", fill=PALETTE["muted"], anchor="sw", font=("", 8))
+
+
+# ---------- Widget phụ: cùng bảng màu, dễ sửa ----------
+
+def _panel(parent, **kwargs):
+    frame = tk.Frame(parent, bg=PALETTE["panel"], highlightbackground=PALETTE["border"],
+                     highlightthickness=1, **kwargs)
+    return frame
+
+
+def _label(parent, text: str, size: int = 10, bold: bool = False, color: str | None = None, **kwargs):
+    return tk.Label(parent, text=text, bg=PALETTE["panel"], fg=color or PALETTE["text"],
+                    font=("", size, "bold" if bold else "normal"), **kwargs)
+
+
+def _title(parent, text: str):
+    return tk.Label(parent, text=text, bg=PALETTE["panel"], fg=PALETTE["cyan"],
+                    font=("", 11, "bold"), anchor="w")
+
+
+def _button(parent, text: str, command, bg: str | None = None, fg: str | None = None, **kwargs):
+    return tk.Button(parent, text=text, command=command,
+                     bg=bg or PALETTE["panel2"], fg=fg or PALETTE["text"],
+                     activebackground=PALETTE["border"], activeforeground=PALETTE["text"],
+                     relief="flat", bd=1, padx=10, pady=6, cursor="hand2", **kwargs)
+
+
+def _entry(parent, width: int = 26):
+    return tk.Entry(parent, width=width, bg=PALETTE["panel2"], fg=PALETTE["text"],
+                    insertbackground=PALETTE["text"], relief="flat", highlightbackground=PALETTE["border"],
+                    highlightthickness=1)
+
+
+def _text(parent, height: int = 10):
+    widget = tk.Text(parent, height=height, wrap="word", bg=PALETTE["panel"],
+                     fg=PALETTE["text"], insertbackground=PALETTE["text"],
+                     relief="flat", highlightbackground=PALETTE["border"], highlightthickness=1)
+    return widget
+
+
+def _pill(parent, text: str, bg: str):
+    return tk.Label(parent, text=text, bg=bg, fg="#0B1220" if bg in (PALETTE["green"], PALETTE["amber"], PALETTE["cyan"]) else PALETTE["text"],
+                    font=("", 9, "bold"), padx=8, pady=2)
+
+
+def _set_text(widget: tk.Text, content: str) -> None:
+    widget.config(state="normal")
+    widget.delete("1.0", "end")
+    widget.insert("1.0", content)
+    widget.config(state="disabled")
+
 
 class DesktopApp(tk.Tk):
     def __init__(self, config_path: str = "config.yaml", output_dir: str = "output"):
@@ -240,195 +554,471 @@ class DesktopApp(tk.Tk):
         self.output_dir = output_dir
         self.events: queue.Queue = queue.Queue()
         self.runner = SessionRunner(config_path, output_dir, self.events)
-        self.title("Phòng trade AI — XAUUSD")
-        self.geometry("1280x820")
-        self.minsize(1024, 640)
-        try:
-            self.style = ttk.Style(self)
-            if "clam" in self.style.theme_names():
-                self.style.theme_use("clam")
-        except Exception:
-            pass
+        self.live = LiveFeed(config_path, self.events)
+        self.title("AI GOLD TRADING ROOM — TERMINAL PRO")
+        self.geometry("1400x900")
+        self.minsize(1100, 720)
+        self.configure(bg=PALETTE["bg"])
         self._current_views: dict[str, dict] = {}
         self._current_snapshot: dict | None = None
+        self._ref_close: float | None = None
+        self._last_balance = 0.0
         self._build_widgets()
         self._refresh_status()
         self._load_history()
         self.after(200, self._poll_events)
+        self.after(1000, self._tick_clock)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        # Realtime chỉ chạy khi nguồn là mt5; nguồn json thì biểu đồ lấy nến
+        # từ snapshot (nếu file JSON có nến) và không hỏi MT5.
+        try:
+            if load_config(config_path).data_source == "mt5":
+                self.live.start()
+        except Exception:
+            pass
 
     # ---------- Xây giao diện ----------
     def _build_widgets(self) -> None:
-        top = ttk.Frame(self, padding=8)
-        top.pack(fill="x")
-        ttk.Label(top, text="Phòng trade AI — XAUUSD", font=("", 16, "bold")).pack(side="left")
+        self.grid_rowconfigure(2, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
+        # Hàng 0: tiêu đề app
+        header = tk.Frame(self, bg=PALETTE["bg"])
+        header.grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 2))
+        tk.Label(header, text="◎  AI GOLD TRADING ROOM — TERMINAL PRO", bg=PALETTE["bg"],
+                 fg=PALETTE["cyan"], font=("", 14, "bold")).pack(side="left")
+        tk.Label(header, text="v2.1.3", bg=PALETTE["bg"], fg=PALETTE["muted"],
+                 font=("", 10)).pack(side="left", padx=8)
         self.mode_var = tk.StringVar(value="DRY-RUN")
-        ttk.Label(top, textvariable=self.mode_var, font=("", 12, "bold"), foreground="#1e8449").pack(side="left", padx=12)
-        self.price_var = tk.StringVar(value="Chưa có giá")
-        ttk.Label(top, textvariable=self.price_var).pack(side="left", padx=8)
-        self.stop_var = tk.StringVar(value="")
-        ttk.Label(top, textvariable=self.stop_var, foreground="#c0392b", font=("", 11, "bold")).pack(side="right")
+        tk.Label(header, textvariable=self.mode_var, bg=PALETTE["amber"], fg="#0B1220",
+                 font=("", 10, "bold"), padx=8, pady=2).pack(side="right")
 
-        controls = ttk.Frame(self, padding=(8, 0, 8, 8))
-        controls.pack(fill="x")
-        ttk.Label(controls, text="Nguồn:").pack(side="left")
-        self.source_var = tk.StringVar(value="mt5")
-        ttk.Combobox(controls, textvariable=self.source_var, values=["mt5", "json"], width=8, state="readonly").pack(side="left", padx=4)
-        self.mock_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(controls, text="AI giả (không tốn phí, không cần key)", variable=self.mock_var).pack(side="left", padx=6)
-        self.run_btn = ttk.Button(controls, text="▶ Chạy 1 phiên", command=lambda: self._start_run(False))
-        self.run_btn.pack(side="left", padx=4)
-        self.loop_btn = ttk.Button(controls, text="↻ Chạy lặp lại", command=lambda: self._start_run(True))
-        self.loop_btn.pack(side="left", padx=4)
-        ttk.Button(controls, text="Làm mới dữ liệu MT5", command=lambda: self.runner.preview(self.source_var.get(), False)).pack(side="left", padx=4)
-        ttk.Button(controls, text="Lấy tin + COT", command=lambda: self.runner.preview(self.source_var.get(), True)).pack(side="left", padx=4)
-        stop_btn = ttk.Button(controls, text="⛔ DỪNG KHẨN CẤP", command=self._create_stop)
-        stop_btn.pack(side="left", padx=4)
-        ttk.Button(controls, text="Gỡ STOP", command=self._clear_stop).pack(side="left", padx=4)
-
-        steps = ttk.Frame(self, padding=(8, 0, 8, 4))
-        steps.pack(fill="x")
-        ttk.Label(steps, text="Quy trình phiên:", font=("", 10, "bold")).pack(side="left")
-        self.step_labels: list[ttk.Label] = []
+        # Hàng 1: market watch + tiến trình 7 bước
+        bar = _panel(self)
+        bar.grid(row=1, column=0, sticky="ew", padx=10, pady=4)
+        for col, weight in enumerate((1, 2, 1, 1, 1, 1, 2, 3)):
+            bar.grid_columnconfigure(col, weight=weight)
+        tk.Label(bar, text="MARKET WATCH:", bg=PALETTE["panel"], fg=PALETTE["muted"],
+                 font=("", 9, "bold")).grid(row=0, column=0, sticky="w", padx=8, pady=6)
+        self.symbol_var = tk.StringVar(value="XAUUSD")
+        tk.Label(bar, textvariable=self.symbol_var, bg=PALETTE["panel"], fg=PALETTE["text"],
+                 font=("", 12, "bold")).grid(row=1, column=0, sticky="w", padx=8)
+        self.price_var = tk.StringVar(value="—")
+        tk.Label(bar, textvariable=self.price_var, bg=PALETTE["panel"], fg=PALETTE["text"],
+                 font=("", 16, "bold")).grid(row=0, column=1, rowspan=2, sticky="w")
+        self.change_var = tk.StringVar(value="")
+        self.change_lbl = tk.Label(bar, textvariable=self.change_var, bg=PALETTE["panel"],
+                                   fg=PALETTE["green"], font=("", 11, "bold"))
+        self.change_lbl.grid(row=0, column=2, rowspan=2, sticky="w")
+        self.spread_var = tk.StringVar(value="SPREAD: —")
+        tk.Label(bar, textvariable=self.spread_var, bg=PALETTE["panel"], fg=PALETTE["text"],
+                 font=("", 11)).grid(row=0, column=3, rowspan=2, sticky="w")
+        self.bal_var = tk.StringVar(value="BAL: —")
+        tk.Label(bar, textvariable=self.bal_var, bg=PALETTE["panel"], fg=PALETTE["text"],
+                 font=("", 11)).grid(row=0, column=4, rowspan=2, sticky="w")
+        self.eq_var = tk.StringVar(value="EQUITY: —")
+        tk.Label(bar, textvariable=self.eq_var, bg=PALETTE["panel"], fg=PALETTE["green"],
+                 font=("", 11, "bold")).grid(row=0, column=5, rowspan=2, sticky="w")
+        self.mt5_var = tk.StringVar(value="MT5: CHƯA KẾT NỐI")
+        self.mt5_lbl = tk.Label(bar, textvariable=self.mt5_var, bg=PALETTE["panel"],
+                                fg=PALETTE["amber"], font=("", 10, "bold"))
+        self.mt5_lbl.grid(row=0, column=6, rowspan=2, sticky="w")
+        steps_frame = tk.Frame(bar, bg=PALETTE["panel"])
+        steps_frame.grid(row=0, column=7, rowspan=2, sticky="e", padx=8)
+        tk.Label(steps_frame, text="PROGRESS:", bg=PALETTE["panel"], fg=PALETTE["muted"],
+                 font=("", 9, "bold"), anchor="w").pack(fill="x")
+        pills = tk.Frame(steps_frame, bg=PALETTE["panel"])
+        pills.pack(fill="x")
+        self.step_labels: list[tk.Label] = []
         for label in STEPS:
-            lbl = ttk.Label(steps, text="○ " + label, foreground="#5d6d7e")
-            lbl.pack(side="left", padx=6)
+            lbl = tk.Label(pills, text=label, bg=PALETTE["panel2"], fg=PALETTE["muted"],
+                           font=("", 8), padx=5, pady=2)
+            lbl.pack(side="left", padx=2)
             self.step_labels.append(lbl)
+
+        # Hàng 2: nội dung 3 tab (chỉ hiện 1 tab, đổi bằng thanh tab dưới cùng)
+        self.content = tk.Frame(self, bg=PALETTE["bg"])
+        self.content.grid(row=2, column=0, sticky="nsew", padx=10, pady=4)
+        self.content.grid_rowconfigure(0, weight=1)
+        self.content.grid_columnconfigure(0, weight=1)
+        self.tab_frames: dict[str, tk.Frame] = {}
+        self._build_tab1()
+        self._build_tab2()
+        self._build_tab3()
+
+        # Hàng 3: thanh tab ở DƯỚI cùng (như ảnh trước)
+        tabbar = tk.Frame(self, bg=PALETTE["bg"])
+        tabbar.grid(row=3, column=0, pady=(2, 0))
+        self.tab_buttons: dict[str, tk.Button] = {}
+        for key, label in (("trade", "Phòng trade"), ("history", "Nhật ký & lịch sử"),
+                           ("config", "Cấu hình & an toàn")):
+            btn = _button(tabbar, label, lambda k=key: self.show_tab(k))
+            btn.pack(side="left", padx=4, ipadx=10, ipady=4)
+            self.tab_buttons[key] = btn
+        self.show_tab("trade")
+
+        # Hàng 4: thanh trạng thái dưới cùng
+        status = tk.Frame(self, bg=PALETTE["bg"])
+        status.grid(row=4, column=0, sticky="ew", padx=10, pady=(4, 8))
+        self.keys_var = tk.StringVar(value="Key: đang kiểm tra...")
+        tk.Label(status, textvariable=self.keys_var, bg=PALETTE["bg"], fg=PALETTE["muted"],
+                 font=("", 9)).pack(side="left")
+        self.clock_var = tk.StringVar(value="")
+        tk.Label(status, textvariable=self.clock_var, bg=PALETTE["bg"], fg=PALETTE["muted"],
+                 font=("", 9)).pack(side="right")
         self.phase_var = tk.StringVar(value="Chưa chạy phiên nào.")
-        ttk.Label(self, textvariable=self.phase_var, padding=(8, 0, 8, 4), wraplength=1200).pack(fill="x", anchor="w")
+        tk.Label(status, textvariable=self.phase_var, bg=PALETTE["bg"], fg=PALETTE["cyan"],
+                 font=("", 9)).pack(side="left", padx=16)
 
-        notebook = ttk.Notebook(self)
-        notebook.pack(fill="both", expand=True, padx=8, pady=4)
+    def show_tab(self, key: str) -> None:
+        for name, frame in self.tab_frames.items():
+            frame.grid_forget()
+        self.tab_frames[key].grid(row=0, column=0, sticky="nsew")
+        for name, btn in self.tab_buttons.items():
+            if name == key:
+                btn.config(bg=PALETTE["blue"], fg="white")
+            else:
+                btn.config(bg=PALETTE["panel2"], fg=PALETTE["text"])
 
-        # Tab 1: phòng trade
-        tab1 = ttk.Frame(notebook, padding=6)
-        notebook.add(tab1, text="Phòng trade")
-        paned = ttk.PanedWindow(tab1, orient="horizontal")
-        paned.pack(fill="both", expand=True)
+    # ----- Tab 1: Phòng trade -----
+    def _build_tab1(self) -> None:
+        tab = tk.Frame(self.content, bg=PALETTE["bg"])
+        self.tab_frames["trade"] = tab
+        tab.grid_rowconfigure(0, weight=1)
+        tab.grid_rowconfigure(1, weight=0)
+        tab.grid_columnconfigure(0, weight=38)
+        tab.grid_columnconfigure(1, weight=34)
+        tab.grid_columnconfigure(2, weight=28)
 
-        left = ttk.Frame(paned, padding=4)
-        paned.add(left, weight=1)
-        ttk.Label(left, text="Dữ liệu MT5 • Tin tức • Sentiment • Danh mục", font=("", 11, "bold")).pack(anchor="w")
-        self.data_text = tk.Text(left, wrap="word", height=30)
-        self.data_text.pack(fill="both", expand=True)
-        self.data_text.insert("1.0", "Chưa có dữ liệu.\nBấm “Làm mới dữ liệu MT5” hoặc “Chạy 1 phiên”.")
-        self.data_text.config(state="disabled")
+        # Cột trái: biểu đồ + chỉ báo
+        left = _panel(tab)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        left.grid_rowconfigure(1, weight=1)
+        left.grid_columnconfigure(0, weight=1)
+        self.chart_title_var = tk.StringVar(value="BIỂU ĐỒ — XAUUSD • M15 • DRY-RUN")
+        tk.Label(left, textvariable=self.chart_title_var, bg=PALETTE["panel"], fg=PALETTE["cyan"],
+                 font=("", 11, "bold"), anchor="w").grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 0))
+        chart_row = tk.Frame(left, bg=PALETTE["panel"])
+        chart_row.grid(row=0, column=0, sticky="e", padx=8, pady=(6, 0))
+        self.zoom_var = tk.StringVar(value="100 nến")
+        tk.Label(chart_row, textvariable=self.zoom_var, bg=PALETTE["panel"], fg=PALETTE["muted"],
+                 font=("", 9)).pack(side="left", padx=4)
+        _button(chart_row, "−", lambda: self._change_zoom(-40), bg=PALETTE["panel2"]).pack(side="left", padx=2)
+        _button(chart_row, "+", lambda: self._change_zoom(40), bg=PALETTE["panel2"]).pack(side="left", padx=2)
+        self.chart = CandleChart(left)
+        self.chart.grid(row=1, column=0, sticky="nsew", padx=8, pady=4)
+        tk.Label(left, text="CHỈ BÁO KỸ THUẬT", bg=PALETTE["panel"], fg=PALETTE["cyan"],
+                 font=("", 11, "bold"), anchor="w").grid(row=2, column=0, sticky="ew", padx=8)
+        self.indicators_text = _text(left, height=5)
+        self.indicators_text.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 8))
+        _set_text(self.indicators_text, "Chưa có chỉ báo.\nBấm “Làm mới MT5” hoặc “Chạy 1 phiên”.")
+        self.source_var = tk.StringVar(value="mt5")
+        self.mock_var = tk.BooleanVar(value=True)
 
-        center = ttk.Frame(paned, padding=4)
-        paned.add(center, weight=2)
-        ttk.Label(center, text="Các AI đang làm việc — bấm “Xem cách AI làm việc” ở từng thẻ", font=("", 11, "bold")).pack(anchor="w")
-        self.cards_frame = ttk.Frame(center)
-        self.cards_frame.pack(fill="both", expand=True)
+        # Cột giữa: AI feed + trưởng phòng (panel tối, không nền nâu)
+        center = _panel(tab)
+        center.grid(row=0, column=1, sticky="nsew", padx=4)
+        center.grid_rowconfigure(1, weight=1)
+        center.grid_columnconfigure(0, weight=1)
+        feed_head = tk.Frame(center, bg=PALETTE["panel"])
+        feed_head.grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 2))
+        tk.Label(feed_head, text="LIVE AI DEBATE FEED", bg=PALETTE["panel"], fg=PALETTE["cyan"],
+                 font=("", 11, "bold")).pack(side="left")
+        self.feed_sync_var = tk.StringVar(value="")
+        tk.Label(feed_head, textvariable=self.feed_sync_var, bg=PALETTE["panel"],
+                 fg=PALETTE["muted"], font=("", 9)).pack(side="right")
+        canvas = tk.Canvas(center, bg=PALETTE["panel"], highlightthickness=0)
+        scrollbar = tk.Scrollbar(center, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.grid(row=1, column=0, sticky="nsew", padx=4)
+        scrollbar.grid(row=1, column=1, sticky="ns")
+        scroll_inner = tk.Frame(canvas, bg=PALETTE["panel"])
+        scroll_win = canvas.create_window((0, 0), window=scroll_inner, anchor="nw")
+        scroll_inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(scroll_win, width=e.width - 8))
         self.cards: dict[str, dict] = {}
         for name in AGENT_NAMES:
-            card = ttk.LabelFrame(self.cards_frame, text=f"{name} — {AGENT_HOW[name]['role']}", padding=6)
-            card.pack(fill="x", pady=3)
-            header = ttk.Frame(card)
-            header.pack(fill="x")
-            status_lbl = ttk.Label(header, text="Chờ chạy", foreground="#5d6d7e")
-            status_lbl.pack(side="left")
-            dir_lbl = ttk.Label(header, text="—", font=("", 11, "bold"))
+            card = tk.Frame(scroll_inner, bg=PALETTE["panel2"], highlightbackground=PALETTE["border"],
+                            highlightthickness=1)
+            card.pack(fill="x", padx=4, pady=3)
+            head = tk.Frame(card, bg=PALETTE["panel2"])
+            head.pack(fill="x", padx=6, pady=(4, 0))
+            tk.Label(head, text=f"[{name.upper()}]", bg=AGENT_HOW[name]["badge"], fg="#0B1220",
+                     font=("", 9, "bold"), padx=6, pady=1).pack(side="left")
+            dir_lbl = tk.Label(head, text="—", bg=PALETTE["panel2"], fg=PALETTE["muted"],
+                               font=("", 10, "bold"))
             dir_lbl.pack(side="right")
-            conf = ttk.Progressbar(card, maximum=1.0, length=200)
-            conf.pack(fill="x", pady=3)
-            reason_lbl = ttk.Label(card, text=AGENT_HOW[name]["how"], wraplength=520, justify="left")
-            reason_lbl.pack(fill="x", anchor="w")
-            detail_btn = ttk.Button(card, text="Xem cách AI này làm việc", command=lambda n=name: self._show_agent_detail(n))
-            detail_btn.pack(anchor="e", pady=2)
+            status_lbl = tk.Label(card, text="Chờ chạy", bg=PALETTE["panel2"], fg=PALETTE["muted"],
+                                  font=("", 9), anchor="w")
+            status_lbl.pack(fill="x", padx=6)
+            conf_canvas = tk.Canvas(card, height=10, bg=PALETTE["panel"], highlightthickness=0)
+            conf_canvas.pack(fill="x", padx=6, pady=2)
+            reason_lbl = tk.Label(card, text=AGENT_HOW[name]["how"], bg=PALETTE["panel2"],
+                                  fg=PALETTE["text"], font=("", 9), wraplength=430, justify="left", anchor="w")
+            reason_lbl.pack(fill="x", padx=6, pady=(0, 2))
+            detail_btn = _button(card, "Xem cách AI này làm việc",
+                                 lambda n=name: self._show_agent_detail(n))
+            detail_btn.pack(anchor="e", padx=6, pady=(0, 4))
             self.cards[name] = {"frame": card, "status": status_lbl, "dir": dir_lbl,
-                                "conf": conf, "reason": reason_lbl}
+                                "conf": conf_canvas, "reason": reason_lbl}
+        chief = tk.Frame(scroll_inner, bg=PALETTE["panel2"], highlightbackground=PALETTE["cyan"],
+                         highlightthickness=1)
+        chief.pack(fill="x", padx=4, pady=6)
+        self.chief_title_var = tk.StringVar(value="★ CHIEF DECISION — CHƯA CÓ KẾT LUẬN")
+        tk.Label(chief, textvariable=self.chief_title_var, bg=PALETTE["panel2"], fg=PALETTE["cyan"],
+                 font=("", 11, "bold"), anchor="w").pack(fill="x", padx=8, pady=(6, 0))
+        self.chief_text = tk.Text(chief, height=5, wrap="word", bg=PALETTE["panel2"],
+                                  fg=PALETTE["text"], relief="flat")
+        self.chief_text.pack(fill="x", padx=8, pady=4)
+        _set_text(self.chief_text, "Chưa có kết luận trưởng phòng.")
 
-        right = ttk.Frame(paned, padding=4)
-        paned.add(right, weight=1)
-        ttk.Label(right, text="Kết luận + Cửa rủi ro", font=("", 11, "bold")).pack(anchor="w")
-        self.chief_text = tk.Text(right, wrap="word", height=12)
-        self.chief_text.pack(fill="x")
-        self.chief_text.insert("1.0", "Chưa có kết luận.")
-        self.chief_text.config(state="disabled")
-        ttk.Label(right, text="10 kiểm tra cửa rủi ro:").pack(anchor="w", pady=(8, 0))
-        self.checks_text = tk.Text(right, wrap="word", height=14)
-        self.checks_text.pack(fill="both", expand=True)
-        self.checks_text.insert("1.0", "Chưa chạy kiểm tra nào.")
-        self.checks_text.config(state="disabled")
+        # Cột phải: order ticket + kiểm tra rủi ro + tin tức/COT
+        right = _panel(tab)
+        right.grid(row=0, column=2, sticky="nsew", padx=(4, 0))
+        right.grid_rowconfigure(2, weight=1)
+        right.grid_columnconfigure(0, weight=1)
+        tk.Label(right, text="ORDER TICKET — XAUUSD", bg=PALETTE["panel"], fg=PALETTE["cyan"],
+                 font=("", 11, "bold"), anchor="w").grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 2))
+        self.ticket_vars = {}
+        for i, (key, label) in enumerate((("entry", "Entry Price:"), ("sl", "Stop Loss:"),
+                                          ("tp", "Take Profit:"), ("lot", "Lot Size:"))):
+            row_frame = tk.Frame(right, bg=PALETTE["panel"])
+            row_frame.grid(row=i + 1, column=0, sticky="ew", padx=8, pady=1)
+            row_frame.grid_columnconfigure(1, weight=1)
+            tk.Label(row_frame, text=label, bg=PALETTE["panel"], fg=PALETTE["text"],
+                     font=("", 10)).grid(row=0, column=0, sticky="w")
+            var = tk.StringVar(value="—")
+            self.ticket_vars[key] = var
+            tk.Label(row_frame, textvariable=var, bg=PALETTE["panel2"], fg=PALETTE["text"],
+                     font=("", 10, "bold"), anchor="e", width=16).grid(row=0, column=1, sticky="e")
+        self.risk_est_var = tk.StringVar(value="RỦI RO ƯỚC TÍNH: —")
+        tk.Label(right, textvariable=self.risk_est_var, bg=PALETTE["panel"], fg=PALETTE["muted"],
+                 font=("", 10, "bold"), anchor="w").grid(row=5, column=0, sticky="ew", padx=8, pady=4)
+        tk.Label(right, text="KIỂM TRA RỦI RO", bg=PALETTE["panel"], fg=PALETTE["cyan"],
+                 font=("", 11, "bold"), anchor="w").grid(row=6, column=0, sticky="ew", padx=8)
+        self.checks_text = _text(right, height=8)
+        self.checks_text.grid(row=7, column=0, sticky="nsew", padx=8, pady=2)
+        _set_text(self.checks_text, "Chưa chạy kiểm tra nào.")
+        tk.Label(right, text="TIN TỨC & COT SENTIMENT", bg=PALETTE["panel"], fg=PALETTE["cyan"],
+                 font=("", 11, "bold"), anchor="w").grid(row=8, column=0, sticky="ew", padx=8, pady=(4, 0))
+        self.news_text = _text(right, height=8)
+        self.news_text.grid(row=9, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        _set_text(self.news_text, "Chưa có tin tức / COT.\nBấm “Lấy tin + COT”.")
         self.order_var = tk.StringVar(value="Chưa có lệnh.")
-        ttk.Label(right, textvariable=self.order_var, wraplength=360, font=("", 11, "bold")).pack(fill="x", pady=6, anchor="w")
+        tk.Label(right, textvariable=self.order_var, bg=PALETTE["panel"], fg=PALETTE["text"],
+                 font=("", 10, "bold"), wraplength=320, anchor="w", justify="left").grid(
+                     row=10, column=0, sticky="ew", padx=8, pady=(0, 6))
 
-        # Tab 2: nhật ký
-        tab2 = ttk.Frame(notebook, padding=6)
-        notebook.add(tab2, text="Nhật ký & lịch sử")
-        left2 = ttk.Frame(tab2)
-        left2.pack(side="left", fill="y", padx=(0, 6))
-        ttk.Button(left2, text="Làm mới lịch sử", command=self._load_history).pack(fill="x")
-        ttk.Button(left2, text="Mở thư mục output", command=self._open_output).pack(fill="x", pady=4)
-        self.history_list = tk.Listbox(left2, width=34, height=28)
-        self.history_list.pack(fill="y", expand=True)
+        # Hàng nút điều khiển của tab 1
+        controls = tk.Frame(tab, bg=PALETTE["bg"])
+        controls.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+        tk.Label(controls, text="Nguồn:", bg=PALETTE["bg"], fg=PALETTE["muted"]).pack(side="left")
+        for value, label in (("mt5", "MT5"), ("json", "JSON thử")):
+            tk.Radiobutton(controls, text=label, variable=self.source_var, value=value,
+                           bg=PALETTE["bg"], fg=PALETTE["text"], selectcolor=PALETTE["panel2"],
+                           activebackground=PALETTE["bg"], activeforeground=PALETTE["text"]).pack(side="left")
+        tk.Checkbutton(controls, text="AI giả (không tốn phí, không cần key)", variable=self.mock_var,
+                       bg=PALETTE["bg"], fg=PALETTE["text"], selectcolor=PALETTE["panel2"],
+                       activebackground=PALETTE["bg"], activeforeground=PALETTE["text"]).pack(side="left", padx=6)
+        self.run_btn = _button(controls, "▶  Chạy 1 phiên", lambda: self._start_run(False), bg=PALETTE["blue"], fg="white")
+        self.run_btn.pack(side="left", padx=4)
+        self.loop_btn = _button(controls, "↻  Chạy lặp lại", lambda: self._start_run(True), bg=PALETTE["blue"], fg="white")
+        self.loop_btn.pack(side="left", padx=4)
+        _button(controls, "Làm mới MT5", lambda: self.runner.preview(self.source_var.get(), False)).pack(side="left", padx=4)
+        _button(controls, "Lấy tin + COT", lambda: self.runner.preview(self.source_var.get(), True)).pack(side="left", padx=4)
+        _button(controls, "⛔  DỪNG KHẨN CẤP", self._create_stop, bg=PALETTE["danger"], fg="white").pack(side="left", padx=4)
+        _button(controls, "Gỡ STOP", self._clear_stop, bg=PALETTE["orange"], fg="#0B1220").pack(side="left", padx=4)
+        self.stop_var = tk.StringVar(value="")
+        tk.Label(controls, textvariable=self.stop_var, bg=PALETTE["bg"], fg=PALETTE["red"],
+                 font=("", 10, "bold")).pack(side="left", padx=8)
+
+    # ----- Tab 2: Nhật ký & lịch sử -----
+    def _build_tab2(self) -> None:
+        tab = tk.Frame(self.content, bg=PALETTE["bg"])
+        self.tab_frames["history"] = tab
+        tab.grid_rowconfigure(1, weight=1)
+        tab.grid_columnconfigure(1, weight=1)
+        # Dải tóm tắt: chỉ đếm phiên, KHÔNG bịa tỉ lệ thắng hay lãi/lỗ theo phiên
+        # (nhật ký thật không ghi lãi/lỗ thực hiện theo phiên).
+        summary = _panel(tab)
+        summary.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
+        self.summary_vars = {}
+        for i, (key, label) in enumerate((("count", "Phiên đã ghi:"), ("buy", "BUY:"),
+                                          ("sell", "SELL:"), ("hold", "HOLD:"),
+                                          ("pass", "Cửa rủi ro PASS:"))):
+            tk.Label(summary, text=label, bg=PALETTE["panel"], fg=PALETTE["muted"],
+                     font=("", 10)).grid(row=0, column=i * 2, sticky="w", padx=(8, 2), pady=6)
+            var = tk.StringVar(value="0")
+            self.summary_vars[key] = var
+            tk.Label(summary, textvariable=var, bg=PALETTE["panel"], fg=PALETTE["cyan"],
+                     font=("", 11, "bold")).grid(row=0, column=i * 2 + 1, sticky="w", pady=6)
+        left = _panel(tab)
+        left.grid(row=1, column=0, sticky="ns", padx=(0, 4))
+        _button(left, "Làm mới lịch sử", self._load_history).pack(fill="x", padx=6, pady=(6, 2))
+        _button(left, "Mở thư mục output", self._open_output).pack(fill="x", padx=6, pady=2)
+        self.history_list = tk.Listbox(left, width=34, bg=PALETTE["panel2"], fg=PALETTE["text"],
+                                       selectbackground=PALETTE["blue"], relief="flat",
+                                       highlightbackground=PALETTE["border"], highlightthickness=1)
+        self.history_list.pack(fill="both", expand=True, padx=6, pady=6)
         self.history_list.bind("<<ListboxSelect>>", self._on_history_select)
-        self.history_text = tk.Text(tab2, wrap="word")
-        self.history_text.pack(side="left", fill="both", expand=True)
-        self.history_text.insert("1.0", "Chọn một phiên bên trái để xem lại toàn bộ.")
-        self.history_text.config(state="disabled")
-        self._history_data: list[dict] = []
+        right = _panel(tab)
+        right.grid(row=1, column=1, sticky="nsew")
+        right.grid_columnconfigure(0, weight=1)
+        tk.Label(right, text="CHI TIẾT PHIÊN", bg=PALETTE["panel"], fg=PALETTE["cyan"],
+                 font=("", 11, "bold"), anchor="w").grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 2))
+        self.hist_summary_var = tk.StringVar(value="Chọn một phiên bên trái để xem lại toàn bộ.")
+        tk.Label(right, textvariable=self.hist_summary_var, bg=PALETTE["panel"], fg=PALETTE["text"],
+                 font=("", 10), anchor="w").grid(row=1, column=0, sticky="ew", padx=8)
+        self.hist_views: dict[str, dict] = {}
+        views_frame = tk.Frame(right, bg=PALETTE["panel"])
+        views_frame.grid(row=2, column=0, sticky="ew", padx=8, pady=4)
+        views_frame.grid_columnconfigure(1, weight=1)
+        for i, name in enumerate(AGENT_NAMES):
+            tk.Label(views_frame, text=name, bg=PALETTE["panel"], fg=PALETTE["text"],
+                     font=("", 9), anchor="w", width=18).grid(row=i, column=0, sticky="w")
+            dir_lbl = tk.Label(views_frame, text="—", bg=PALETTE["panel"], fg=PALETTE["muted"],
+                               font=("", 9, "bold"), width=6)
+            dir_lbl.grid(row=i, column=1, sticky="w")
+            bar = tk.Canvas(views_frame, height=10, bg=PALETTE["panel"], highlightthickness=0)
+            bar.grid(row=i, column=2, sticky="ew", padx=4)
+            conf_lbl = tk.Label(views_frame, text="", bg=PALETTE["panel"], fg=PALETTE["text"],
+                                font=("", 9), width=5)
+            conf_lbl.grid(row=i, column=3, sticky="e")
+            self.hist_views[name] = {"dir": dir_lbl, "bar": bar, "conf": conf_lbl}
+        tk.Label(right, text="QUYẾT ĐỊNH TRƯỞNG PHÒNG + KIỂM TRA RỦI RO", bg=PALETTE["panel"],
+                 fg=PALETTE["cyan"], font=("", 11, "bold"), anchor="w").grid(
+                     row=3, column=0, sticky="ew", padx=8, pady=(4, 0))
+        self.history_text = _text(right, height=12)
+        self.history_text.grid(row=4, column=0, sticky="nsew", padx=8, pady=(0, 8))
+        right.grid_rowconfigure(4, weight=1)
+        _set_text(self.history_text, "Chọn một phiên bên trái để xem lại toàn bộ.")
+        self._history_data: list = []
 
-        # Tab 3: cấu hình
-        tab3 = ttk.Frame(notebook, padding=10)
-        notebook.add(tab3, text="Cấu hình & an toàn")
-        self._build_config_tab(tab3)
-
-        status = ttk.Frame(self, padding=6)
-        status.pack(fill="x")
-        self.keys_var = tk.StringVar(value="Key: đang kiểm tra...")
-        ttk.Label(status, textvariable=self.keys_var).pack(side="left")
-        ttk.Label(status, text="Mọi giá SL/TP tính bằng USD, không dùng pips. Chế độ live bị khóa trên app.").pack(side="right")
-
-    def _build_config_tab(self, parent: ttk.Frame) -> None:
+    # ----- Tab 3: Cấu hình & an toàn -----
+    def _build_tab3(self) -> None:
+        tab = tk.Frame(self.content, bg=PALETTE["bg"])
+        self.tab_frames["config"] = tab
+        tab.grid_rowconfigure(0, weight=1)
+        tab.grid_rowconfigure(1, weight=0)
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_columnconfigure(1, weight=1)
         cfg = load_config(self.config_path)
         self.cfg_entries: dict[str, tk.Entry] = {}
         self.cfg_checks: dict[str, tk.BooleanVar] = {}
 
-        def row(label: str, key: str, value, row_no: int) -> None:
-            ttk.Label(parent, text=label).grid(row=row_no, column=0, sticky="w", pady=3)
-            entry = ttk.Entry(parent, width=28)
+        left = _panel(tab)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        tk.Label(left, text="CẤU HÌNH GIAO DỊCH", bg=PALETTE["panel"], fg=PALETTE["cyan"],
+                 font=("", 11, "bold"), anchor="w").pack(fill="x", padx=8, pady=(6, 4))
+        form = tk.Frame(left, bg=PALETTE["panel"])
+        form.pack(fill="x", padx=8)
+        form.grid_columnconfigure(1, weight=1)
+
+        def row(parent, label: str, key: str, value, row_no: int, disabled: bool = False) -> None:
+            tk.Label(parent, text=label, bg=PALETTE["panel"], fg=PALETTE["text"],
+                     font=("", 10), anchor="w").grid(row=row_no, column=0, sticky="w", pady=3)
+            entry = _entry(parent)
             entry.insert(0, str(value))
-            entry.grid(row=row_no, column=1, sticky="w", pady=3, padx=6)
+            entry.grid(row=row_no, column=1, sticky="ew", pady=3, padx=(6, 0))
+            if disabled:
+                entry.config(state="disabled")
             self.cfg_entries[key] = entry
 
-        row("Symbol trên MT5:", "symbol", cfg.symbol, 0)
-        row("Khung thời gian (M1/M5/M15/M30/H1/H4/D1):", "timeframe", cfg.timeframe, 1)
-        row("Chế độ (chỉ xem):", "mode", cfg.mode, 2)
-        self.cfg_entries["mode"].config(state="disabled")
-        row("Số vị thế tối đa:", "max_open_positions", cfg.max_open_positions, 3)
-        row("Chu kỳ lặp (giây):", "loop_interval_seconds", cfg.loop_interval_seconds, 4)
-        risk = cfg.risk
-        fields = [
-            ("Lỗ tối đa 1 lệnh (USD):", "max_risk_usd_per_trade", risk.max_risk_usd_per_trade),
-            ("Lỗ tối đa trong ngày (USD):", "max_daily_loss_usd", risk.max_daily_loss_usd),
-            ("Lot tối đa 1 lệnh:", "max_lot_per_order", risk.max_lot_per_order),
-            ("Độ tin cậy tối thiểu:", "min_confidence", risk.min_confidence),
-            ("Khoảng cách SL tối thiểu (USD):", "min_sl_distance_usd", risk.min_sl_distance_usd),
-            ("Khoảng cách SL tối đa (USD):", "max_sl_distance_usd", risk.max_sl_distance_usd),
-            ("Tỉ lệ lãi/lỗ tối thiểu:", "min_reward_risk", risk.min_reward_risk),
-            ("Spread tối đa (USD):", "max_spread_usd", risk.max_spread_usd),
-            ("Giá chạy tối đa cho phép (USD):", "max_price_move_usd", risk.max_price_move_usd),
-            ("Exposure danh mục tối đa (USD):", "max_portfolio_notional_usd", risk.max_portfolio_notional_usd),
-        ]
-        for i, (label, key, value) in enumerate(fields, start=5):
-            row(label, key, value, i)
+        row(form, "Symbol:", "symbol", cfg.symbol, 0)
+        row(form, "Timeframe:", "timeframe", cfg.timeframe, 1)
+        row(form, "Max open positions:", "max_open_positions", cfg.max_open_positions, 2)
+        row(form, "Loop interval (giây):", "loop_interval_seconds", cfg.loop_interval_seconds, 3)
         news_var = tk.BooleanVar(value=cfg.news_enabled)
         sent_var = tk.BooleanVar(value=cfg.sentiment_enabled)
         self.cfg_checks["news_enabled"] = news_var
         self.cfg_checks["sentiment_enabled"] = sent_var
-        ttk.Checkbutton(parent, text="Bật lấy tin tức", variable=news_var).grid(row=15, column=0, sticky="w")
-        ttk.Checkbutton(parent, text="Bật lấy sentiment (COT)", variable=sent_var).grid(row=15, column=1, sticky="w")
-        ttk.Button(parent, text="Lưu cấu hình", command=self._save_config).grid(row=16, column=0, pady=10, sticky="w")
-        ttk.Button(parent, text="Mở file .env bằng Notepad", command=self._open_env).grid(row=16, column=1, pady=10, sticky="w")
-        self.config_msg_var = tk.StringVar(value="Lưu sẽ tạo bản sao config.yaml.bak. Đổi model AI vẫn sửa tay trong config.yaml.")
-        ttk.Label(parent, textvariable=self.config_msg_var, wraplength=700).grid(row=17, column=0, columnspan=2, sticky="w")
-        ttk.Label(parent, text="Key AI không hiện giá trị ở đây và không sửa được ở đây. Điền key trong file .env bằng Notepad, không dán key vào chat hay lên mạng.", wraplength=700, foreground="#c0392b").grid(row=18, column=0, columnspan=2, sticky="w", pady=6)
+        tk.Checkbutton(form, text="News enabled: Bật", variable=news_var, bg=PALETTE["panel"],
+                       fg=PALETTE["text"], selectcolor=PALETTE["panel2"],
+                       activebackground=PALETTE["panel"]).grid(row=4, column=0, columnspan=2, sticky="w", pady=3)
+        tk.Checkbutton(form, text="Sentiment enabled: Bật", variable=sent_var, bg=PALETTE["panel"],
+                       fg=PALETTE["text"], selectcolor=PALETTE["panel2"],
+                       activebackground=PALETTE["panel"]).grid(row=5, column=0, columnspan=2, sticky="w", pady=3)
+        row(form, "Mode:", "mode", cfg.mode, 6, disabled=True)
+        tk.Label(left, text="(Read-only — app không cho đổi sang live)", bg=PALETTE["panel"],
+                 fg=PALETTE["muted"], font=("", 9), anchor="w").pack(fill="x", padx=8)
+
+        right = _panel(tab)
+        right.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+        tk.Label(right, text="GIỚI HẠN RỦI RO (USD)", bg=PALETTE["panel"], fg=PALETTE["cyan"],
+                 font=("", 11, "bold"), anchor="w").pack(fill="x", padx=8, pady=(6, 4))
+        risk_form = tk.Frame(right, bg=PALETTE["panel"])
+        risk_form.pack(fill="x", padx=8)
+        risk_form.grid_columnconfigure(1, weight=1)
+        risk = cfg.risk
+        fields = [
+            ("Max risk per trade (USD):", "max_risk_usd_per_trade", risk.max_risk_usd_per_trade),
+            ("Max daily loss (USD):", "max_daily_loss_usd", risk.max_daily_loss_usd),
+            ("Max lot per order:", "max_lot_per_order", risk.max_lot_per_order),
+            ("Minimum confidence:", "min_confidence", risk.min_confidence),
+            ("Min stop loss distance (USD):", "min_sl_distance_usd", risk.min_sl_distance_usd),
+            ("Max stop loss distance (USD):", "max_sl_distance_usd", risk.max_sl_distance_usd),
+            ("Minimum reward risk:", "min_reward_risk", risk.min_reward_risk),
+            ("Max spread (USD):", "max_spread_usd", risk.max_spread_usd),
+            ("Max price move (USD):", "max_price_move_usd", risk.max_price_move_usd),
+            ("Max portfolio notional (USD):", "max_portfolio_notional_usd", risk.max_portfolio_notional_usd),
+        ]
+        for i, (label, key, value) in enumerate(fields):
+            row(risk_form, label, key, value, i)
+
+        bottom = tk.Frame(tab, bg=PALETTE["bg"])
+        bottom.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        bottom.grid_columnconfigure(0, weight=1)
+        bottom.grid_columnconfigure(1, weight=2)
+        emergency = tk.Frame(bottom, bg=PALETTE["panel"], highlightbackground=PALETTE["red"],
+                             highlightthickness=1)
+        emergency.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        tk.Label(emergency, text="⚠ ĐIỀU KHIỂN KHẨN CẤP", bg=PALETTE["panel"], fg=PALETTE["red"],
+                 font=("", 11, "bold"), anchor="w").pack(fill="x", padx=8, pady=(6, 2))
+        btn_row = tk.Frame(emergency, bg=PALETTE["panel"])
+        btn_row.pack(fill="x", padx=8)
+        _button(btn_row, "⚠ DỪNG KHẨN CẤP", self._create_stop, bg=PALETTE["danger"], fg="white").pack(side="left", padx=(0, 6))
+        _button(btn_row, "Go STOP", self._clear_stop, bg=PALETTE["orange"], fg="#0B1220").pack(side="left")
+        tk.Label(emergency, text="STOP file status:", bg=PALETTE["panel"], fg=PALETTE["text"],
+                 font=("", 10), anchor="w").pack(fill="x", padx=8, pady=(6, 0))
+        self.stop_status_var = tk.StringVar(value="NOT ACTIVE")
+        tk.Label(emergency, textvariable=self.stop_status_var, bg=PALETTE["grey"], fg="white",
+                 font=("", 10, "bold"), padx=8, pady=2).pack(anchor="w", padx=8, pady=(0, 8))
+
+        keys_panel = _panel(bottom)
+        keys_panel.grid(row=0, column=1, sticky="nsew")
+        tk.Label(keys_panel, text="BẢO MẬT - AI KEY STATUS", bg=PALETTE["panel"], fg=PALETTE["cyan"],
+                 font=("", 11, "bold"), anchor="w").pack(fill="x", padx=8, pady=(6, 2))
+        self.key_pills: dict[str, tk.Label] = {}
+        pills_row = tk.Frame(keys_panel, bg=PALETTE["panel"])
+        pills_row.pack(fill="x", padx=8)
+        for env_name, label in (("OPENAI_API_KEY", "OpenAI"), ("GEMINI_API_KEY", "Gemini"),
+                                ("ANTHROPIC_API_KEY", "Anthropic")):
+            tk.Label(pills_row, text=f"{label}:", bg=PALETTE["panel"], fg=PALETTE["text"],
+                     font=("", 10)).pack(side="left", padx=(0, 2))
+            pill = _pill(pills_row, "MISSING", PALETTE["grey"])
+            pill.pack(side="left", padx=(0, 12))
+            self.key_pills[env_name] = pill
+        tk.Label(keys_panel, text="Lưu ý: Khóa API được chỉnh sửa trong file .env cục bộ. Không hiển thị giá trị khóa.",
+                 bg=PALETTE["panel"], fg=PALETTE["amber"], font=("", 9), anchor="w").pack(fill="x", padx=8, pady=4)
+        save_row = tk.Frame(keys_panel, bg=PALETTE["panel"])
+        save_row.pack(fill="x", padx=8, pady=(0, 4))
+        _button(save_row, "Mở .env trong Notepad", self._open_env).pack(side="left", padx=(0, 6))
+        _button(save_row, "Lưu cấu hình", self._save_config, bg=PALETTE["blue"], fg="white").pack(side="left")
+        self.config_msg_var = tk.StringVar(value="Một bản sao lưu config.yaml.bak sẽ được tạo khi lưu.")
+        tk.Label(keys_panel, textvariable=self.config_msg_var, bg=PALETTE["panel"],
+                 fg=PALETTE["muted"], font=("", 9), anchor="w").pack(fill="x", padx=8, pady=(0, 8))
 
     # ---------- Hành động ----------
+    def _change_zoom(self, delta: int) -> None:
+        self.chart.visible = max(30, min(200, self.chart.visible + delta))
+        self.zoom_var.set(f"{self.chart.visible} nến")
+        self.chart.draw()
+
     def _start_run(self, loop: bool) -> None:
+        self.live.pause()
         if not self.runner.start(self.source_var.get(), self.mock_var.get(),
                                  "data/snapshot_example.json", loop):
+            self.live.resume()
             messagebox.showinfo("Đang chạy", "Đang có 1 phiên chạy, chờ xong rồi chạy tiếp.")
             return
         for name in AGENT_NAMES:
@@ -514,7 +1104,8 @@ class DesktopApp(tk.Tk):
         detail = tk.Toplevel(self)
         detail.title(f"{name} — {AGENT_HOW[name]['role']} làm việc như thế nào")
         detail.geometry("860x640")
-        text = tk.Text(detail, wrap="word")
+        detail.configure(bg=PALETTE["bg"])
+        text = tk.Text(detail, wrap="word", bg=PALETTE["panel"], fg=PALETTE["text"])
         text.pack(fill="both", expand=True, padx=8, pady=8)
         parts = [
             f"AI: {name} — {AGENT_HOW[name]['role']}",
@@ -544,52 +1135,76 @@ class DesktopApp(tk.Tk):
         text.config(state="disabled")
 
     # ---------- Cập nhật giao diện từ sự kiện ----------
+    def _draw_conf(self, canvas: tk.Canvas, confidence: float, color: str) -> None:
+        canvas.delete("all")
+        width = canvas.winfo_width()
+        if width < 10:
+            width = 200
+        height = canvas.winfo_height() or 10
+        canvas.create_rectangle(0, 0, width, height, fill=PALETTE["panel2"], outline="")
+        canvas.create_rectangle(0, 0, max(0, width * max(0.0, min(1.0, float(confidence or 0.0)))),
+                                height, fill=color, outline="")
+
     def _set_card(self, name: str, status: str, direction: str, confidence: float, reasoning: str) -> None:
         card = self.cards.get(name)
         if not card:
             return
         card["status"].config(text=status)
-        card["dir"].config(text=direction, foreground="#1e8449" if direction == "BUY" else "#c0392b" if direction == "SELL" else "#5d6d7e")
-        card["conf"].config(value=max(0.0, min(1.0, float(confidence or 0.0))))
+        card["dir"].config(text=direction, fg=_direction_color(direction) if direction in ("BUY", "SELL", "HOLD") else PALETTE["muted"])
+        self._draw_conf(card["conf"], confidence, _direction_color(direction))
         card["reason"].config(text=reasoning or "")
 
     def _set_step(self, index: int) -> None:
         for i, lbl in enumerate(self.step_labels):
             if i < index:
-                lbl.config(text="● " + STEPS[i], foreground="#1e8449")
+                lbl.config(bg=PALETTE["green"], fg="#0B1220")
             elif i == index:
-                lbl.config(text="▶ " + STEPS[i], foreground="#1a5276")
+                lbl.config(bg=PALETTE["amber"], fg="#0B1220")
             else:
-                lbl.config(text="○ " + STEPS[i], foreground="#5d6d7e")
+                lbl.config(bg=PALETTE["panel2"], fg=PALETTE["muted"])
 
-    def _set_text(self, widget: tk.Text, content: str) -> None:
-        widget.config(state="normal")
-        widget.delete("1.0", "end")
-        widget.insert("1.0", content)
-        widget.config(state="disabled")
+    def _update_market_bar(self, bid: float, ask: float, balance: float | None = None,
+                           equity: float | None = None, connected: bool = True) -> None:
+        price = (bid + ask) / 2
+        self.price_var.set(f"{price:,.2f} USD")
+        self.spread_var.set(f"SPREAD: {ask - bid:.2f}")
+        if balance:
+            self._last_balance = balance
+            self.bal_var.set(f"BAL: {balance:,.2f} USD")
+        if equity:
+            self.eq_var.set(f"EQUITY: {equity:,.2f} USD")
+        if self._ref_close:
+            change = price - self._ref_close
+            pct = change / self._ref_close * 100 if self._ref_close else 0.0
+            sign = "+" if change >= 0 else ""
+            self.change_var.set(f"{sign}{change:.2f} ({sign}{pct:.2f}%)")
+            self.change_lbl.config(fg=PALETTE["green"] if change >= 0 else PALETTE["red"])
+        self.mt5_var.set("MT5: CONNECTED • ONLINE" if connected else "MT5: CHƯA KẾT NỐI")
+        self.mt5_lbl.config(fg=PALETTE["green"] if connected else PALETTE["amber"])
 
     def _show_snapshot(self, snap: dict) -> None:
         self._current_snapshot = snap
-        self.price_var.set(f"Giá {snap['price']} • Spread {snap['spread']} USD • {snap['source']} lúc {snap.get('captured_at') or 'không rõ'}")
+        self.symbol_var.set(snap["symbol"])
+        self.chart_title_var.set(f"BIỂU ĐỒ — {snap['symbol']} • {snap['timeframe']} • DRY-RUN")
         ind = snap.get("indicators", {})
+        candles = snap.get("candles") or []
+        if candles:
+            if len(candles) >= 2:
+                self._ref_close = candles[-2]["close"]
+            self.chart.set_candles(candles, ind.get("support"), ind.get("resistance"))
+        self._update_market_bar(snap["bid"], snap["ask"], snap.get("account_balance"),
+                                snap.get("account_equity"), connected=True)
         lines = [
-            f"Symbol: {snap['symbol']} ({snap['timeframe']}), nguồn: {snap['source']}",
-            f"Bid {snap['bid']} / Ask {snap['ask']} / Spread {snap['spread']} USD",
-            f"RSI14: {ind.get('rsi14')}, ATR14: {ind.get('atr14_usd')} USD, EMA20: {ind.get('ema20')}, EMA50: {ind.get('ema50')}",
-            f"Bollinger: trên {ind.get('bollinger_upper_usd')}, giữa {ind.get('bollinger_middle_usd')}, dưới {ind.get('bollinger_lower_usd')}",
-            f"Hỗ trợ: {ind.get('support')}, kháng cự: {ind.get('resistance')}",
-            f"Vị thế mở (symbol): {snap['open_positions']}, lỗ trong ngày: {snap['daily_loss_usd']} USD",
-            f"Số dư: {snap['account_balance']} USD, equity: {snap['account_equity']} USD",
-            "",
-            "TIN TỨC:", snap.get("news_text") or "Chưa có tin tức.",
-            "",
-            "SENTIMENT:", snap.get("sentiment_text") or "Chưa có dữ liệu sentiment.",
-            "",
-            "DANH MỤC:", json.dumps(snap.get("portfolio") or {}, ensure_ascii=False, indent=2),
-            "",
-            snap.get("notes") or "",
+            f"RSI(14): {ind.get('rsi14')}  •  MACD: {ind.get('macd_line')} / {ind.get('signal')} • Hist {ind.get('macd_histogram')}",
+            f"ATR(14): {ind.get('atr14_usd')} USD  •  EMA20: {ind.get('ema20')}  •  EMA50: {ind.get('ema50')}",
+            f"BOLLINGER: Upper {ind.get('bollinger_upper_usd')} • Mid {ind.get('bollinger_middle_usd')} • Lower {ind.get('bollinger_lower_usd')}",
+            f"Hỗ trợ: {ind.get('support')}  •  Kháng cự: {ind.get('resistance')}",
+            f"Vị thế mở: {snap['open_positions']}  •  Lỗ trong ngày: {snap['daily_loss_usd']} USD  •  Nguồn: {snap['source']} lúc {snap.get('captured_at') or 'không rõ'}",
         ]
-        self._set_text(self.data_text, "\n".join(str(x) for x in lines))
+        _set_text(self.indicators_text, "\n".join(str(x) for x in lines))
+        news = (snap.get("news_text") or "Chưa có tin tức.") + "\n\n" + (snap.get("sentiment_text") or "Chưa có dữ liệu sentiment.")
+        _set_text(self.news_text, news[:4000])
+        self.feed_sync_var.set(f"Synced {snap.get('captured_at') or ''}")
 
     def _show_result(self, result: dict) -> None:
         self._show_snapshot(result["snapshot"])
@@ -600,13 +1215,22 @@ class DesktopApp(tk.Tk):
         self._current_views["chief"] = chief
         self._set_card("chief", "Đã xong", chief["direction"], chief["confidence"], chief["reasoning"])
         risk = result["risk"]
-        self._set_text(self.chief_text,
-                       f"Hướng: {chief['direction']}, tin cậy: {chief['confidence']}\n"
-                       f"Entry: {chief['entry']} USD, SL: {chief['stop_loss']} USD, TP: {chief['take_profit']} USD\n"
-                       f"Lý do: {chief['reasoning']}\nĐiểm vô hiệu: {chief['invalidation']}\n"
-                       f"Bằng chứng: {chief['evidence']}")
-        checks = "\n".join(f"{'✓' if c['passed'] else '✕'} {c['name']}: {c['detail']}" for c in risk.get("checks", []))
-        self._set_text(self.checks_text, checks or risk["reason"])
+        self.chief_title_var.set(f"★ CHIEF DECISION — {chief['direction']} • CONF {int(float(chief['confidence'] or 0) * 100)}%")
+        _set_text(self.chief_text,
+                  f"Confidence: {chief['confidence']} • Quyết định: {chief['direction']}\n"
+                  f"Entry: {chief['entry']} USD, SL: {chief['stop_loss']} USD, TP: {chief['take_profit']} USD\n"
+                  f"Lý do: {chief['reasoning']}\nĐiểm vô hiệu: {chief['invalidation']}")
+        self.ticket_vars["entry"].set(f"{chief['entry']} USD" if chief["entry"] is not None else "—")
+        self.ticket_vars["sl"].set(f"{chief['stop_loss']} USD" if chief["stop_loss"] is not None else "—")
+        self.ticket_vars["tp"].set(f"{chief['take_profit']} USD" if chief["take_profit"] is not None else "—")
+        self.ticket_vars["lot"].set(f"{risk['lot']}" if risk.get("lot") else "—")
+        if risk.get("lot") and risk.get("sl_distance") and self._last_balance:
+            risk_usd = risk["lot"] * risk["sl_distance"] * 100
+            self.risk_est_var.set(f"RỦI RO ƯỚC TÍNH: {risk_usd:,.0f} USD ({risk_usd / self._last_balance * 100:.2f}% vốn)")
+        else:
+            self.risk_est_var.set("RỦI RO ƯỚC TÍNH: —")
+        checks = "\n".join(f"{'✓ PASS' if c['passed'] else '✕ FAIL'}  {c['name']}: {c['detail']}" for c in risk.get("checks", []))
+        _set_text(self.checks_text, checks or risk["reason"])
         self.order_var.set(f"{result['order']}  •  Lot: {risk['lot']}  •  File: {result['saved']}")
         self._load_history()
 
@@ -617,14 +1241,22 @@ class DesktopApp(tk.Tk):
                 if kind == "log":
                     self.phase_var.set(str(payload))
                 elif kind == "step":
-                    step_no = int(payload)
-                    self._set_step(step_no)
-                    if step_no == 3:
-                        for name in ANALYST_NAMES:
-                            self._set_card(name, "Đang tranh luận...", self.cards[name]["dir"].cget("text"),
-                                           self.cards[name]["conf"].cget("value"), self.cards[name]["reason"].cget("text"))
-                    elif step_no == 4:
-                        self._set_card("chief", "Đang tổng hợp...", "—", 0.0, AGENT_HOW["chief"]["how"])
+                    self._set_step(int(payload))
+                elif kind == "tick":
+                    self._update_market_bar(payload["bid"], payload["ask"],
+                                            payload.get("balance"), payload.get("equity"))
+                    self.chart.update_tick(payload["bid"], payload["ask"])
+                    if payload.get("candles"):
+                        candles = payload["candles"]
+                        if len(candles) >= 2:
+                            self._ref_close = candles[-2]["close"]
+                        snap = self._current_snapshot or {}
+                        ind = snap.get("indicators", {})
+                        self.chart.set_candles(candles, ind.get("support"), ind.get("resistance"))
+                elif kind == "live_error":
+                    self.mt5_var.set("MT5: CHƯA KẾT NỐI")
+                    self.mt5_lbl.config(fg=PALETTE["amber"])
+                    self.phase_var.set(f"Realtime: {payload}")
                 elif kind == "snapshot":
                     self._show_snapshot(payload)
                 elif kind == "view":
@@ -637,11 +1269,16 @@ class DesktopApp(tk.Tk):
                     messagebox.showerror("Lỗi khi chạy phiên", str(payload))
                     self.phase_var.set(f"Lỗi: {payload}")
                 elif kind == "finished":
+                    self.live.resume()
                     self._refresh_buttons()
                     self._refresh_status()
         except queue.Empty:
             pass
         self.after(200, self._poll_events)
+
+    def _tick_clock(self) -> None:
+        self.clock_var.set(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        self.after(1000, self._tick_clock)
 
     def _refresh_buttons(self) -> None:
         running = self.runner.is_running()
@@ -656,11 +1293,20 @@ class DesktopApp(tk.Tk):
             return
         self.mode_var.set("LIVE" if cfg.mode == "live" else "DEMO" if cfg.mode == "demo" else "DRY-RUN")
         stop_file = cfg.project_root / cfg.risk.kill_switch_file
-        self.stop_var.set("ĐÃ DỪNG (file STOP)" if stop_file.exists() else "")
+        stopped = stop_file.exists()
+        self.stop_var.set("ĐÃ DỪNG (file STOP)" if stopped else "")
+        self.stop_status_var.set("ACTIVE" if stopped else "NOT ACTIVE")
         keys = []
         for env_name, label in (("OPENAI_API_KEY", "OpenAI"), ("GEMINI_API_KEY", "Gemini"), ("ANTHROPIC_API_KEY", "Claude")):
-            keys.append(f"{label}: {'● có' if os.getenv(env_name, '').strip() else '○ chưa có'}")
+            present = bool(os.getenv(env_name, "").strip())
+            keys.append(f"{label}: {'● có' if present else '○ chưa có'}")
+            pill = self.key_pills.get(env_name)
+            if pill is not None:
+                pill.config(text="PRESENT" if present else "MISSING",
+                            bg=PALETTE["green"] if present else PALETTE["grey"])
         self.keys_var.set("Key: " + "  •  ".join(keys) + "  (chỉ hiện có/không có, không hiện giá trị)")
+        self.symbol_var.set(cfg.symbol)
+        self.chart_title_var.set(f"BIỂU ĐỒ — {cfg.symbol} • {cfg.timeframe} • DRY-RUN")
         self._refresh_buttons()
 
     def _load_history(self) -> None:
@@ -677,25 +1323,48 @@ class DesktopApp(tk.Tk):
             self._history_data.append((path, data))
             chief = data.get("chief", {})
             self.history_list.insert("end", f"{data.get('timestamp_utc', '')} — {chief.get('direction', '')}")
+        buy = sum(1 for _p, d in self._history_data if d.get("chief", {}).get("direction") == "BUY")
+        sell = sum(1 for _p, d in self._history_data if d.get("chief", {}).get("direction") == "SELL")
+        hold = sum(1 for _p, d in self._history_data if d.get("chief", {}).get("direction") == "HOLD")
+        passed = sum(1 for _p, d in self._history_data if d.get("risk", {}).get("allowed"))
+        self.summary_vars["count"].set(str(len(self._history_data)))
+        self.summary_vars["buy"].set(str(buy))
+        self.summary_vars["sell"].set(str(sell))
+        self.summary_vars["hold"].set(str(hold))
+        self.summary_vars["pass"].set(str(passed))
 
     def _on_history_select(self, _event) -> None:
         sel = self.history_list.curselection()
         if not sel:
             return
-        _path, data = self._history_data[sel[0]]
-        self._set_text(self.history_text, json.dumps(data, ensure_ascii=False, indent=2))
-        views = data.get("views", [])
-        for view in views:
-            self._current_views[view["name"]] = view
-            self._set_card(view["name"], "Xem lại từ nhật ký", view["direction"], view["confidence"], view["reasoning"])
+        path, data = self._history_data[sel[0]]
+        self.hist_summary_var.set(f"Phiên: {data.get('timestamp_utc', '')}  •  File: {path.name}  •  Lệnh: {data.get('order', '')}")
+        views = {v["name"]: v for v in data.get("views", [])}
+        chief = data.get("chief", {})
+        for name, widgets in self.hist_views.items():
+            view = views.get(name) if name != "chief" else chief
+            if not view:
+                continue
+            direction = view.get("direction", "—")
+            widgets["dir"].config(text=direction, fg=_direction_color(direction))
+            widgets["conf"].config(text=f"{int(float(view.get('confidence') or 0) * 100)}%")
+            self._draw_conf(widgets["bar"], view.get("confidence") or 0, _direction_color(direction))
+            self._current_views[name] = view
+            self._set_card(name, "Xem lại từ nhật ký", direction, view.get("confidence") or 0,
+                           view.get("reasoning", ""))
         risk = data.get("risk", {})
-        checks = "\n".join(f"{'✓' if c['passed'] else '✕'} {c['name']}: {c['detail']}" for c in risk.get("checks", []))
-        self._set_text(self.checks_text, checks or risk.get("reason", ""))
+        checks = "\n".join(f"{'✓ PASS' if c['passed'] else '✕ FAIL'}  {c['name']}: {c['detail']}" for c in risk.get("checks", []))
+        chief_line = (f"Hướng: {chief.get('direction')}, tin cậy: {chief.get('confidence')}\n"
+                      f"Entry: {chief.get('entry_usd')} USD, SL: {chief.get('stop_loss_usd')} USD, TP: {chief.get('take_profit_usd')} USD\n")
+        _set_text(self.history_text, chief_line + "\n" + (checks or risk.get("reason", "")))
         self.order_var.set(str(data.get("order", "")))
-        self._set_text(self.data_text, str(data.get("snapshot", "")) + "\n\nTIN TỨC:\n" + str(data.get("news_text", "")) + "\n\nSENTIMENT:\n" + str(data.get("sentiment_text", "")))
 
     def _on_close(self) -> None:
         self.runner.stop()
+        try:
+            self.live.stop()
+        except Exception:
+            pass
         self.destroy()
 
 

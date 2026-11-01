@@ -449,6 +449,8 @@ App mở thành 1 cửa sổ với 3 tab:
   và sentiment, lưu kèm bản sao `config.yaml.bak`; hiện trạng thái key
   (có/không có, không hiện giá trị), nút mở `.env` bằng Notepad.
 
+Bản Terminal Pro (chỉ ở local, chưa đẩy, theo ảnh demo lựa chọn 2 ngày 2026-11-02, Thái tự sửa tiếp): thanh market watch và biểu đồ nến chạy theo thời gian thực — luồng nền hỏi tick MT5 mỗi 2 giây và nến mới mỗi ~10 giây, cập nhật giá/spread/số dư/equity và nến cuối đang chạy; luồng realtime tạm dừng trong lúc 1 phiên AI chạy rồi tự nối lại. Thanh tab nằm ở dưới cùng, bảng màu tập trung ở dict `PALETTE` đầu file `desktop_app.py` (sửa 1 chỗ là đổi cả app), khối trưởng phòng dùng panel tối, không nền nâu. Nến OHLCV lấy từ MT5 qua `MT5DataProvider.get_candles()` và ghi vào `MarketSnapshot.candles`; file JSON thử không có nến thì biểu đồ trống, không bịa nến.
+
 Nút "Xem cách AI này làm việc" mở cửa sổ riêng giải thích đúng AI đó làm gì,
 đọc dữ liệu nào, lệnh hệ thống (system prompt) đã gửi, snapshot đã gửi trong
 phiên gần nhất, và câu trả lời thô của AI (raw JSON). Nhờ đó Thái thấy được

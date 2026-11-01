@@ -1,8 +1,9 @@
 # Phòng trade AI — Mô tả vận hành, giao diện demo và các chức năng chính
 
-- **Phiên bản:** v1, làm ở local ngày 2026-11-01, đẩy lên repo `doanhthaivcyb-lgtm/Universal-Trade`, nhánh `main`, theo yêu cầu của Thái trong side chat phòng trade AI ngày 2026-11-01.
+- **Phiên bản:** v1.2 theo plan `ai_trading_room_plan.md` (thêm News, Sentiment, Portfolio Manager; TP chỉ tính bằng USD, không dùng pips), làm ở local ngày 2026-11-01, chưa đẩy lên repo trong lần sửa này.
 - **Thị trường:** XAUUSD, khung chính tạm là M15 trong `config.yaml`, chờ Thái chốt M15 hay H1.
-- **Nhà cung cấp AI đã chốt:** OpenAI + Gemini + Claude (Thái nói có đủ key ngày 2026-11-01).
+- **Nhà cung cấp AI đã chốt:** OpenAI + Gemini + Claude (Thái nói có đủ key ngày 2026-11-01). Phân vai và model theo plan, xem mục 3.
+- **Đơn vị giá bắt buộc:** mọi entry, stop loss, take profit đều là giá tuyệt đối tính bằng USD/oz. KHÔNG dùng pips, KHÔNG dùng điểm.
 - **Nguyên tắc an toàn:** mặc định chỉ phân tích và chạy thử (`dry_run`). AI chỉ tư vấn;
   lot, stop loss, điều kiện vào lệnh cuối cùng do **code** quyết định qua cửa rủi ro cứng.
   Không có key, mật khẩu hay thông tin tài khoản nào trong code hay trong file này.
@@ -28,12 +29,12 @@
 Snapshot thị trường (1 bản duy nhất)
         |
         v
-Vòng 1: 5 AI phân tích ĐỘC LẬP, chạy song song
-  technical (OpenAI) | macro (Claude) | sentiment (Gemini)
-  contrarian (OpenAI) | risk_analyst (Claude)
+Vòng 1: 6 AI phân tích ĐỘC LẬP, chạy song song
+  technical (Gemini) | fundamental (GPT-4o) | sentiment (GPT-4o)
+  contrarian (OpenAI) | risk_analyst (Claude) | portfolio_manager (Gemini)
         |
         v
-Vòng 2: 5 AI đọc tóm tắt của nhau, phản biện và chốt lại
+Vòng 2: 6 AI đọc tóm tắt của nhau, phản biện và chốt lại
         |
         v
 Trưởng phòng (Claude) tổng hợp -> 1 JSON quyết định cuối
@@ -65,12 +66,13 @@ giá, chỉ báo hay tin tức ngoài snapshot.
 
 | # | AI | Nhà cung cấp / model mặc định | Nhiệm vụ chính | Không làm |
 |---|---|---|---|---|
-| 1 | `technical` | OpenAI / `gpt-4o-mini` | Xu hướng, cấu trúc giá, hỗ trợ/kháng cự, RSI, MACD, ATR, EMA | Không đọc tin vĩ mô |
-| 2 | `macro` | Claude / `claude-sonnet-4-5` | Fed, USD/DXY, lợi suất, CPI, địa chính trị, lịch tin trong snapshot | Không suy đoán tin chưa công bố |
-| 3 | `sentiment` | Gemini / `gemini-2.0-flash` | Hành vi giá, volume, phản ứng quanh mức giá quan trọng trong phiên | Không dùng dữ liệu ngoài snapshot |
-| 4 | `contrarian` | OpenAI / `gpt-4o-mini` | Tìm điểm yếu của phe đa số, kịch bản ngược chiều, điểm vô hiệu | Không đồng thuận cho có |
+| 1 | `technical` | Gemini / `gemini-2.0-flash` | Xu hướng, cấu trúc giá, hỗ trợ/kháng cự, RSI, MACD, ATR, EMA, Bollinger | Không đọc tin vĩ mô |
+| 2 | `fundamental` | OpenAI / `gpt-4o` | Fed, USD/DXY, lợi suất, CPI, NFP, địa chính trị; chỉ dùng tin và lịch đã lấy được | Không suy đoán tin chưa công bố, không bịa số liệu |
+| 3 | `sentiment` | OpenAI / `gpt-4o` | COT vàng và điểm từ khóa tiêu đề tin tức, cộng hành vi giá trong phiên | Không tưởng điểm từ khóa là Fear & Greed thật |
+| 4 | `contrarian` | OpenAI / `gpt-4o` | Tìm điểm yếu của phe đa số, kịch bản ngược chiều, điểm vô hiệu (giữ thêm ngoài plan) | Không đồng thuận cho có |
 | 5 | `risk_analyst` | Claude / `claude-sonnet-4-5` | Tư vấn rủi ro: spread, biến động, giờ tin, hậu quả nếu stop bị quét | **Không quyết lot** — code quyết |
-| 6 | `chief` (trưởng phòng) | Claude / `claude-sonnet-4-5` | Tổng hợp 5 ý kiến, ra **1 quyết định cuối duy nhất** | Không bỏ qua ý phản biện |
+| 6 | `portfolio_manager` | Gemini / `gemini-2.0-flash` | Exposure toàn tài khoản, tập trung vào vàng, rủi ro cộng thêm 1 lệnh | **Không quyết lot** — code quyết |
+| 7 | `chief` (trưởng phòng) | Claude Opus / `claude-opus-4-8` | Tổng hợp 6 ý kiến, ra **1 quyết định cuối duy nhất**, TP/SL bằng USD | Không bỏ qua ý phản biện và ý danh mục |
 
 Cấu hình provider/model/temperature nằm ở `config.yaml`, mục `providers` và
 `agents`. Đổi model chỉ cần sửa `config.yaml`, không cần sửa code agent.
@@ -171,7 +173,7 @@ và số dư tài khoản.
 
 - `direction` chỉ nhận `BUY`, `SELL`, `HOLD`. Giá trị khác là JSON không hợp lệ.
 - `confidence` là số từ `0.0` đến `1.0`.
-- `entry`, `stop_loss`, `take_profit` là số giá, hoặc `null` khi chọn `HOLD`.
+- `entry`, `stop_loss`, `take_profit` là giá tuyệt đối bằng USD/oz, hoặc `null` khi chọn `HOLD`. KHÔNG dùng pips, theo yêu cầu của Thái ngày 2026-11-01. Code chặn thêm trường hợp SL/TP quá xa giá hiện tại, vì đó là dấu hiệu AI đã trả về khoảng cách/pips thay vì giá USD.
 - AI được dặn trong system prompt: "Chỉ dùng số liệu trong snapshot. Không bịa
   tin, không bịa chỉ báo. Không chắc thì HOLD."
 
@@ -235,13 +237,38 @@ nguồn MT5 mặc định.
   (hàng chục giây), giá có thể chạy. Executor kiểm tra lại tick mới nhất
   trước khi đặt lệnh và hủy lệnh nếu giá chạy quá `max_price_move_usd`
   (mặc định 5 USD) so với giá lúc thảo luận — xem mục 8.
-- MT5 không cung cấp tin tức văn bản, lịch kinh tế hay DXY/lợi suất. AI vĩ mô
-  chỉ đọc được `macro_news` điền tay trong config; nếu để trống thì AI đó
+- MT5 không cung cấp tin tức văn bản, lịch kinh tế hay DXY/lợi suất. Phần tin
+  tức và sentiment lấy tự động được mô tả ở mục 6.6; nếu nguồn lỗi thì AI đó
   phải trả về HOLD hoặc phân tích dựa trên giá, không được bịa tin.
+
+### 6.6. Tin tức và sentiment lấy tự động (v1.2, theo plan)
+
+Tin tức và sentiment không lấy từ MT5, mà lấy từ nguồn công khai qua
+`trading_room/news_fetcher.py` và `trading_room/sentiment_data.py`, ngay trước
+mỗi phiên (trừ chế độ `--mock`), rồi gắn vào snapshot:
+
+- **Lịch kinh tế:** file XML tuần này của ForexFactory
+  (`https://nfs.faireconomy.media/ff_calendar_thisweek.xml`). Chỉ giữ sự kiện
+  trong 48 giờ tới, ưu tiên USD và ảnh hưởng HIGH. Giờ hiển thị đúng như nguồn
+  ghi, không tự đổi múi giờ.
+- **Tiêu đề tin:** RSS của Fed (`https://www.federalreserve.gov/feeds/press_all.xml`),
+  ưu tiên tiêu đề có từ khóa vàng/Fed/CPI/NFP/USD. Chỉ lấy tiêu đề, không tự
+  diễn giải nội dung bài viết.
+- **COT vàng:** file CSV của FuturesBench (dữ liệu CFTC public domain,
+  `https://futuresbench.com/data/cot/gold.csv`): vị thế ròng nhóm phi thương mại,
+  thay đổi tuần trước, vị trí phần trăm trong 52 tuần. Báo cáo chốt thứ Ba,
+  công bố thứ Sáu, nên luôn cũ vài ngày — code ghi rõ ngày báo cáo.
+- **Điểm từ khóa tiêu đề:** chỉ đếm từ tăng/giảm trong tiêu đề đã lấy được.
+  Đây KHÔNG phải Fear & Greed Index thật, không phải khảo sát tâm lý.
+
+Nguồn nào lỗi hoặc đổi định dạng thì phần đó ghi rõ "không lấy được", phiên
+vẫn chạy tiếp, AI liên quan phải hạ độ tin cậy hoặc HOLD. Không bịa tin,
+không bịa COT, không bịa sentiment để lấp chỗ trống. Không cần key API cho
+3 nguồn mặc định này.
 
 ---
 
-## 7. Cửa rủi ro cứng — 9 kiểm tra theo thứ tự
+## 7. Cửa rủi ro cứng — 10 kiểm tra theo thứ tự
 
 Hàm `check_risk(cfg, snapshot, chief, views)` trong `risk.py`. Trượt 1 là chặn.
 
@@ -256,6 +283,7 @@ Hàm `check_risk(cfg, snapshot, chief, views)` trong `risk.py`. Trượt 1 là c
 | 7 | Đồng thuận: nếu đa số analyst ngược hướng trưởng phòng và tin cậy < 0.8 thì chặn | Ngưỡng 0.8 viết trong code |
 | 8 | SL/TP hợp lệ: khoảng cách SL trong giới hạn, tỉ lệ lãi/lỗ tối thiểu đạt | SL 3–30 USD, `min_reward_risk: 1.0` |
 | 9 | Lỗ ngày + mức lỗ tối đa của lệnh này không vượt giới hạn ngày | Cùng giới hạn ở #5 |
+| 10 | Exposure danh mục: danh mục hiện tại + lệnh mới không vượt giới hạn | `max_portfolio_notional_usd: 1000000.0` |
 
 ### Công thức tính lot
 
@@ -390,7 +418,10 @@ JSON lỗi). Không có trạng thái nào tự động đặt lệnh mà không
 | Lấy dữ liệu realtime từ MT5 | Tick, nến, chỉ báo, vị thế, lỗ ngày, số dư trực tiếp từ MT5 | `mt5_data.py`: `MT5DataProvider.build_snapshot()`, `connect()`, `close()` |
 | Tính chỉ báo cơ bản | EMA, RSI, ATR, MACD từ nến MT5 | `market_snapshot.py`: `ema()`, `rsi()`, `atr()`, `macd()` |
 | Đọc file thử | Đọc file JSON thành `MarketSnapshot`, tính giá giữa và spread, chỉ để chạy thử | `market_snapshot.py`: `load_snapshot()` |
-| Cửa rủi ro cứng | 9 kiểm tra theo thứ tự, tính lot | `risk.py`: `check_risk()`, `calculate_lot()` |
+| Lấy tin tức và lịch | RSS Fed + XML lịch ForexFactory, lọc USD/HIGH, không bịa khi lỗi | `news_fetcher.py`: `fetch_news()` |
+| Lấy sentiment | COT vàng (CSV FuturesBench/CFTC) + điểm từ khóa tiêu đề | `sentiment_data.py`: `fetch_sentiment()` |
+| Tính exposure danh mục | Tổng giá trị danh nghĩa mọi vị thế đang mở từ MT5 | `mt5_data.py`: `_portfolio()`, `risk.py`: `portfolio_notional_usd()` |
+| Cửa rủi ro cứng | 10 kiểm tra theo thứ tự, tính lot | `risk.py`: `check_risk()`, `calculate_lot()` |
 | Đặt lệnh MT5 | Đặt lệnh market có SL/TP/magic, chặn nếu tài khoản không phải demo ở chế độ demo, chặn live nếu thiếu khóa | `executor.py`: `MT5Executor.place()` |
 | Chạy thử không lệnh | Ghi lại lệnh đáng lẽ đặt, không chạm MT5 | `executor.py`: `DryRunExecutor.place()` |
 | Lưu nhật ký phiên | Lưu JSON đầy đủ + Markdown đọc nhanh cho mỗi phiên | `journal.py`: `save_session()` |
@@ -419,6 +450,8 @@ ai_trading_room/
     llm_clients.py
     market_snapshot.py
     mt5_data.py              # kết nối MT5 realtime, tạo MarketSnapshot
+    news_fetcher.py          # lịch ForexFactory + RSS Fed
+    sentiment_data.py        # COT vàng + điểm từ khóa tiêu đề
     agents.py
     orchestrator.py
     risk.py

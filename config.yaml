@@ -2,6 +2,8 @@
 # Mọi key API và mật khẩu MT5 để trong file .env, KHÔNG để trong file này và KHÔNG đẩy lên repo.
 # Các giá trị dưới đây là mặc định an toàn để chạy thử. Thái chốt lại demo/thật,
 # mức lỗ tối đa và khung thời gian rồi sửa ở đây trước khi chạy thật.
+# QUY TẮC ĐƠN VỊ: mọi entry, stop loss, take profit đều tính bằng USD/oz.
+# KHÔNG dùng pips, KHÔNG dùng điểm. Ví dụ: giá 4000 USD, TP 4020 USD là lãi 20 USD, không phải 20 pips.
 
 # Đổi thành đúng tên symbol trên MT5 của broker, ví dụ "XAUUSD.vx" ở Valetax.
 symbol: "XAUUSD"
@@ -13,8 +15,17 @@ data_source: "mt5"
 mt5_candles: 200
 # Khi chạy --loop: nghỉ bao nhiêu giây giữa 2 phiên. Mặc định 900 = 15 phút (M15).
 loop_interval_seconds: 900
-# MT5 không có tin văn bản. Điền tay tin/lịch tin tại đây nếu muốn AI vĩ mô đọc.
+# Tin điền tay thêm (không bắt buộc). Tin chính lấy tự động từ news_fetcher.
 macro_news: ""
+# Tin tức và sentiment từ nguồn công khai miễn phí, không cần key.
+# Lịch ForexFactory + RSS Fed; COT vàng từ FuturesBench (dữ liệu CFTC).
+news_enabled: true
+news_calendar_url: "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
+news_rss_feeds:
+  - "https://www.federalreserve.gov/feeds/press_all.xml"
+news_timeout_seconds: 20.0
+sentiment_enabled: true
+sentiment_cot_csv_url: "https://futuresbench.com/data/cot/gold.csv"
 # dry_run: chỉ ghi nhật ký, không đặt lệnh thật dù MT5 có kết nối.
 # demo: chỉ cho phép khi tài khoản MT5 là demo (kiểm tra trong executor).
 # live: CHỈ khi allow_live=true VÀ biến môi trường LIVE_TRADING_ENABLED=true.
@@ -23,9 +34,12 @@ allow_live: false
 magic_number: 20261101
 max_open_positions: 1
 
+# Model theo plan ai_trading_room_plan.md (mục "Gợi ý"). Đổi model chỉ cần sửa tại đây.
+# Chief dùng Claude Opus (đắt nhất) — model ID claude-opus-4-8, kiểm chứng qua tìm kiếm web 2026-11-01;
+# nếu API báo model không tồn tại / đã đổi tên thì sửa lại ID này, không cần sửa code.
 providers:
   openai:
-    model: "gpt-4o-mini"
+    model: "gpt-4o"
     temperature: 0.2
     max_tokens: 800
   gemini:
@@ -36,17 +50,21 @@ providers:
     model: "claude-sonnet-4-5"
     temperature: 0.2
     max_tokens: 800
+  anthropic_opus:
+    model: "claude-opus-4-8"
+    temperature: 0.2
+    max_tokens: 800
 
-# Mỗi agent dùng 1 provider khác nhau để ý kiến độc lập thật sự.
+# Phân vai theo plan. Contrarian giữ lại thêm ngoài plan để có phản biện.
 agents:
   technical:
-    provider: "openai"
-    role: "technical"
-  macro:
-    provider: "anthropic"
-    role: "macro"
-  sentiment:
     provider: "gemini"
+    role: "technical"
+  fundamental:
+    provider: "openai"
+    role: "fundamental"
+  sentiment:
+    provider: "openai"
     role: "sentiment"
   contrarian:
     provider: "openai"
@@ -54,8 +72,11 @@ agents:
   risk_analyst:
     provider: "anthropic"
     role: "risk"
+  portfolio_manager:
+    provider: "gemini"
+    role: "portfolio"
   chief:
-    provider: "anthropic"
+    provider: "anthropic_opus"
     role: "chief"
 
 risk:
@@ -74,5 +95,7 @@ risk:
   max_spread_usd: 0.50
   # Giá chạy khỏi giá lúc lấy dữ liệu quá mức này thì hủy lệnh vì SL/TP đã cũ.
   max_price_move_usd: 5.0
+  # Tổng giá trị danh mục tối đa (USD danh nghĩa) trước khi cộng lệnh mới. TẠM, chờ Thái chốt.
+  max_portfolio_notional_usd: 1000000.0
   # File công tắc dừng khẩn cấp: tạo file STOP trong thư mục dự án là dừng mọi lệnh.
   kill_switch_file: "STOP"

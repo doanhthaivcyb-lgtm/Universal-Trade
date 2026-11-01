@@ -158,6 +158,8 @@ def build_client(provider: str, settings: dict, mock: bool = False, canned: dict
         return OpenAIClient(model, temperature, max_tokens)
     if provider == "gemini":
         return GeminiClient(model, temperature, max_tokens)
-    if provider == "anthropic":
+    if provider in ("anthropic", "anthropic_opus"):
+        # anthropic_opus là bí danh trong config.yaml để Chief dùng model Opus
+        # trong khi Risk dùng Sonnet, cả hai đều gọi API Anthropic như nhau.
         return ClaudeClient(model, temperature, max_tokens)
     raise ValueError(f"Provider chưa hỗ trợ: {provider}")

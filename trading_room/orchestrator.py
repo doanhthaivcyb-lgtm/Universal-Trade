@@ -6,9 +6,13 @@ from .agents import AgentView, run_agent
 from .config import Config
 from .llm_clients import LLMClient, build_client
 from .market_snapshot import MarketSnapshot
+from .news_fetcher import GOLD_NEWS_KEYWORDS, fetch_news
 from .risk import RiskDecision, check_risk
+from .sentiment_data import fetch_sentiment
 
-ANALYST_NAMES = ["technical", "macro", "sentiment", "contrarian", "risk_analyst"]
+# Theo plan: technical, fundamental, sentiment, risk, portfolio + contrarian
+# giữ lại từ bản trước để có phản biện. Chief không nằm trong danh sách này.
+ANALYST_NAMES = ["technical", "fundamental", "sentiment", "contrarian", "risk_analyst", "portfolio_manager"]
 
 
 def build_clients(cfg: Config, mock: bool = False, canned: dict | None = None) -> dict[str, LLMClient]:
@@ -28,8 +32,41 @@ def _summary(view: AgentView) -> str:
     )
 
 
+def enrich_snapshot(cfg: Config, snapshot: MarketSnapshot, mock: bool = False) -> MarketSnapshot:
+    """Lấy tin tức + sentiment từ nguồn công khai và gắn vào snapshot.
+
+    Chế độ mock thì bỏ qua để không gọi mạng. Lỗi nguồn nào thì ghi rõ
+    trong text, không bịa dữ liệu thay thế, và phiên vẫn chạy tiếp.
+    """
+    if mock:
+        return snapshot
+    if getattr(cfg, "news_enabled", True):
+        try:
+            bundle = fetch_news(
+                cfg.news_calendar_url, cfg.news_rss_feeds, GOLD_NEWS_KEYWORDS,
+                timeout=float(cfg.news_timeout_seconds),
+            )
+            snapshot.news_text = bundle.to_prompt_text()
+            headlines = bundle.headlines
+        except Exception as exc:
+            snapshot.news_text = f"TIN TỨC: không lấy được tin tức/lịch kinh tế: {exc}"
+            headlines = []
+    else:
+        headlines = []
+    if getattr(cfg, "sentiment_enabled", True):
+        try:
+            sentiment = fetch_sentiment(cfg.sentiment_cot_csv_url, headlines,
+                                        timeout=float(cfg.news_timeout_seconds))
+            snapshot.sentiment_text = sentiment.to_prompt_text()
+        except Exception as exc:
+            snapshot.sentiment_text = f"DỮ LIỆU SENTIMENT: không lấy được: {exc}"
+    # Tin điền tay trong config vẫn giữ, để trong macro_news riêng.
+    return snapshot
+
+
 def run_room(cfg: Config, snapshot: MarketSnapshot, mock: bool = False, canned: dict | None = None):
-    """Chạy 1 phiên: vòng 1 độc lập, vòng 2 phản biện, trưởng phòng chốt, cửa rủi ro."""
+    """Chạy 1 phiên: lấy tin/sentiment, vòng 1 độc lập, vòng 2 phản biện, trưởng phòng chốt, cửa rủi ro."""
+    snapshot = enrich_snapshot(cfg, snapshot, mock=mock)
     clients = build_clients(cfg, mock=mock, canned=canned)
 
     # Vòng 1: mỗi analyst phân tích độc lập, chạy song song.
@@ -56,6 +93,7 @@ def run_room(cfg: Config, snapshot: MarketSnapshot, mock: bool = False, canned: 
     chief_response = chief_client.complete(
         "Bạn là trưởng phòng giao dịch. Tổng hợp các phân tích dưới đây và ra 1 quyết định cuối duy nhất. "
         "Nếu mâu thuẫn mạnh hoặc bằng chứng yếu thì chọn HOLD. "
+        "entry, stop_loss, take_profit là giá tuyệt đối bằng USD/oz, KHÔNG dùng pips. "
         'Trả về DUY NHẤT 1 JSON: {"direction": "BUY|SELL|HOLD", "confidence": 0.0-1.0, '
         '"entry": số hoặc null, "stop_loss": số hoặc null, "take_profit": số hoặc null, '
         '"reasoning": "...", "invalidation": "...", "evidence": [...]}',

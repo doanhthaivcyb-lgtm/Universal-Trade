@@ -18,7 +18,7 @@ import os
 from datetime import datetime
 
 from .config import Config
-from .market_snapshot import MarketSnapshot, atr, ema, macd, rsi
+from .market_snapshot import MarketSnapshot, atr, bollinger, ema, macd, rsi
 
 
 def _import_mt5():
@@ -88,11 +88,19 @@ def _rates_to_lists(rates):
     return highs, lows, closes, times
 
 
-def _daily_loss_usd(mt5, symbol: str) -> float:
-    """Lỗ trong ngày = lỗ đã chốt hôm nay + lỗ đang nổi của vị thế mở.
+def _position_field(pos, name: str, default=0.0):
+    if hasattr(pos, name):
+        return getattr(pos, name)
+    if isinstance(pos, dict):
+        return pos.get(name, default)
+    return default
+
+
+def _daily_loss_usd(mt5) -> float:
+    """Lỗ trong ngày TOÀN TÀI KHOẢN = lỗ đã chốt hôm nay (mọi symbol) + lỗ đang nổi.
 
     Trả về số dương khi đang lỗ, 0 khi đang lãi hoặc không có giao dịch.
-    Lỗi đọc lịch sử thì trả về 0 và ghi chú trong snapshot, không bịa số.
+    Lỗi đọc lịch sử thì trả về 0, không bịa số.
     """
     closed_loss = 0.0
     try:
@@ -100,25 +108,69 @@ def _daily_loss_usd(mt5, symbol: str) -> float:
         deals = mt5.history_deals_get(start, datetime.now())
         if deals:
             for deal in deals:
-                deal_symbol = deal.symbol if hasattr(deal, "symbol") else deal.get("symbol")
-                if deal_symbol != symbol:
-                    continue
-                profit = deal.profit if hasattr(deal, "profit") else deal.get("profit", 0.0)
-                swap = deal.swap if hasattr(deal, "swap") else deal.get("swap", 0.0)
-                commission = deal.commission if hasattr(deal, "commission") else deal.get("commission", 0.0)
+                profit = _position_field(deal, "profit", 0.0)
+                swap = _position_field(deal, "swap", 0.0)
+                commission = _position_field(deal, "commission", 0.0)
                 closed_loss += float(profit) + float(swap) + float(commission)
     except Exception:
         closed_loss = 0.0
     floating_loss = 0.0
     try:
-        positions = mt5.positions_get(symbol=symbol) or []
+        positions = mt5.positions_get() or []
         for pos in positions:
-            profit = pos.profit if hasattr(pos, "profit") else pos.get("profit", 0.0)
-            floating_loss += float(profit)
+            floating_loss += float(_position_field(pos, "profit", 0.0))
     except Exception:
         floating_loss = 0.0
     total = closed_loss + floating_loss
     return round(max(0.0, -total), 2)
+
+
+def _portfolio(mt5, contract_size: float) -> dict:
+    """Danh mục toàn tài khoản cho Portfolio Manager và cửa rủi ro exposure.
+
+    Mỗi vị thế: symbol, type (BUY/SELL), volume, giá mở, giá hiện tại,
+    lãi/lỗ USD, giá trị danh nghĩa = volume × giá hiện tại × contract_size.
+    Lấy giá hiện tại từng symbol bằng tick mới nhất; symbol nào không có
+    tick thì dùng giá mở và ghi rõ trong notes của vị thế đó.
+    """
+    positions = []
+    try:
+        raw_positions = mt5.positions_get() or []
+    except Exception:
+        raw_positions = []
+    gross_notional = 0.0
+    floating_total = 0.0
+    for pos in raw_positions:
+        symbol = _position_field(pos, "symbol", "")
+        volume = float(_position_field(pos, "volume", 0.0))
+        price_open = float(_position_field(pos, "price_open", 0.0))
+        profit = float(_position_field(pos, "profit", 0.0))
+        pos_type = _position_field(pos, "type", "")
+        price = price_open
+        try:
+            tick = mt5.symbol_info_tick(symbol) if symbol else None
+            if tick is not None:
+                price = float(tick.bid if str(pos_type) in ("1", "SELL") else tick.ask)
+        except Exception:
+            pass
+        notional = abs(volume) * price * contract_size if price else 0.0
+        gross_notional += notional
+        floating_total += profit
+        positions.append({
+            "symbol": str(symbol),
+            "type": str(pos_type),
+            "volume": volume,
+            "price_open": price_open,
+            "price": round(price, 2),
+            "profit_usd": round(profit, 2),
+            "notional_usd": round(notional, 2),
+        })
+    return {
+        "positions": positions,
+        "position_count": len(positions),
+        "gross_notional_usd": round(gross_notional, 2),
+        "floating_profit_usd": round(floating_total, 2),
+    }
 
 
 class MT5DataProvider:
@@ -176,6 +228,7 @@ class MT5DataProvider:
                 "Chờ MT5 tải đủ lịch sử rồi chạy lại."
             )
         macd_values = macd(closes)
+        bollinger_values = bollinger(closes)
         recent_high = max(highs[-100:])
         recent_low = min(lows[-100:])
         indicators = {
@@ -183,6 +236,7 @@ class MT5DataProvider:
             "atr14_usd": round(atr(highs, lows, closes, 14), 4),
             "ema20": round(ema(closes, 20), 2),
             "ema50": round(ema(closes, 50), 2),
+            **bollinger_values,
             "macd_line": macd_values["macd_line"],
             "macd_signal": macd_values["signal"],
             "macd_histogram": macd_values["histogram"],
@@ -195,7 +249,8 @@ class MT5DataProvider:
             "last_close": round(closes[-1], 2),
             "candles_used": len(closes),
         }
-        positions = mt5.positions_get(symbol=self.cfg.symbol) or []
+        portfolio = _portfolio(mt5, self.cfg.risk.contract_size)
+        symbol_positions = [p for p in portfolio["positions"] if p["symbol"] == self.cfg.symbol]
         account = mt5.account_info()
         return MarketSnapshot(
             symbol=self.cfg.symbol,
@@ -206,12 +261,15 @@ class MT5DataProvider:
             source="mt5",
             captured_at=datetime.now().isoformat(timespec="seconds"),
             macro_news=self.cfg.macro_news,
-            open_positions=len(positions),
-            daily_loss_usd=_daily_loss_usd(mt5, self.cfg.symbol),
+            portfolio=portfolio,
+            open_positions=len(symbol_positions),
+            daily_loss_usd=_daily_loss_usd(mt5),
             account_balance=float(account.balance) if account is not None else 0.0,
+            account_equity=float(getattr(account, "equity", account.balance)) if account is not None else 0.0,
             notes=(
                 f"Lấy trực tiếp từ MT5 realtime: tick bid/ask mới nhất và "
-                f"{len(closes)} nến {self.cfg.timeframe}. MT5 không cung cấp tin văn bản, "
-                "macro_news lấy từ config.yaml (để trống nếu không điền tay)."
+                f"{len(closes)} nến {self.cfg.timeframe}. Danh mục toàn tài khoản: "
+                f"{portfolio['position_count']} vị thế, gross notional {portfolio['gross_notional_usd']:,.0f} USD. "
+                "MT5 không cung cấp tin văn bản; tin tức lấy từ news_fetcher, không phải từ macro_news."
             ),
         )

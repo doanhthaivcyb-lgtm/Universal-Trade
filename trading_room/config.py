@@ -35,6 +35,10 @@ class RiskConfig:
     # Giá được phép chạy khỏi giá lúc lấy dữ liệu trong lúc AI thảo luận.
     # Vượt quá thì executor hủy lệnh, vì SL/TP của trưởng phòng đã cũ.
     max_price_move_usd: float = 5.0
+    # Tổng giá trị danh mục tối đa (USD danh nghĩa) được phép trước khi cộng lệnh mới.
+    # Tính: tổng |volume × giá × contract_size| của mọi vị thế đang mở.
+    # TẠM: 1.000.000 USD trên vốn 100.000 USD, chờ Thái chốt.
+    max_portfolio_notional_usd: float = 1000000.0
     kill_switch_file: str = "STOP"
 
 
@@ -51,8 +55,15 @@ class Config:
     mt5_candles: int = 200
     # Chu kỳ chạy lại khi dùng --loop, tính bằng giây. Mặc định 900 = 15 phút (M15).
     loop_interval_seconds: int = 900
-    # MT5 không có tin văn bản. Điền tay tại đây nếu muốn AI vĩ mô đọc tin/lịch tin.
+    # MT5 không có tin văn bản. Điền tay tại đây nếu muốn AI vĩ mô đọc thêm.
     macro_news: str = ""
+    # Tin tức / sentiment từ nguồn công khai miễn phí, không cần key.
+    news_enabled: bool = True
+    news_calendar_url: str = "https://nfs.faireconomy.media/ff_calendar_thisweek.xml"
+    news_rss_feeds: list = field(default_factory=lambda: ["https://www.federalreserve.gov/feeds/press_all.xml"])
+    news_timeout_seconds: float = 20.0
+    sentiment_enabled: bool = True
+    sentiment_cot_csv_url: str = "https://futuresbench.com/data/cot/gold.csv"
     providers: dict = field(default_factory=dict)
     agents: dict = field(default_factory=dict)
     risk: RiskConfig = field(default_factory=RiskConfig)
@@ -81,6 +92,12 @@ def load_config(config_path: str | Path = "config.yaml") -> Config:
         mt5_candles=int(data.get("mt5_candles", 200)),
         loop_interval_seconds=int(data.get("loop_interval_seconds", 900)),
         macro_news=str(data.get("macro_news", "")),
+        news_enabled=bool(data.get("news_enabled", True)),
+        news_calendar_url=str(data.get("news_calendar_url", "https://nfs.faireconomy.media/ff_calendar_thisweek.xml")),
+        news_rss_feeds=list(data.get("news_rss_feeds", ["https://www.federalreserve.gov/feeds/press_all.xml"])),
+        news_timeout_seconds=float(data.get("news_timeout_seconds", 20.0)),
+        sentiment_enabled=bool(data.get("sentiment_enabled", True)),
+        sentiment_cot_csv_url=str(data.get("sentiment_cot_csv_url", "https://futuresbench.com/data/cot/gold.csv")),
         providers=data.get("providers", {}),
         agents=data.get("agents", {}),
         risk=risk,

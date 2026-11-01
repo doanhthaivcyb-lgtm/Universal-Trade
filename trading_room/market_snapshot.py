@@ -20,9 +20,17 @@ class MarketSnapshot:
     source: str = "json"  # "mt5" khi lấy trực tiếp từ MT5, "json" khi đọc file thử
     captured_at: str = ""
     macro_news: str = ""
+    # Tin tức và sentiment lấy được từ nguồn công khai (xem news_fetcher /
+    # sentiment_data). Để trống khi chưa lấy được — AI không được bịa.
+    news_text: str = ""
+    sentiment_text: str = ""
+    # Danh mục toàn tài khoản từ MT5: tổng exposure, vị thế từng symbol.
+    # Dùng cho Portfolio Manager và cửa rủi ro exposure.
+    portfolio: dict = field(default_factory=dict)
     open_positions: int = 0
     daily_loss_usd: float = 0.0
     account_balance: float = 0.0
+    account_equity: float = 0.0
     notes: str = ""
 
     @property
@@ -39,10 +47,15 @@ class MarketSnapshot:
             f"thời điểm lấy dữ liệu: {self.captured_at}\n"
             f"Bid: {self.bid}, Ask: {self.ask}, Spread: {self.spread}\n"
             f"Chỉ báo: {json.dumps(self.indicators, ensure_ascii=False)}\n"
-            f"Vĩ mô/tin: {self.macro_news}\n"
-            f"Vị thế đang mở: {self.open_positions}, lỗ trong ngày: {self.daily_loss_usd} USD, "
-            f"số dư: {self.account_balance} USD\n"
-            f"Ghi chú: {self.notes}"
+            f"Vĩ mô/tin điền tay: {self.macro_news}\n"
+            f"{self.news_text}\n"
+            f"{self.sentiment_text}\n"
+            f"Danh mục toàn tài khoản: {json.dumps(self.portfolio, ensure_ascii=False)}\n"
+            f"Vị thế đang mở (symbol này): {self.open_positions}, lỗ trong ngày: {self.daily_loss_usd} USD, "
+            f"số dư: {self.account_balance} USD, equity: {self.account_equity} USD\n"
+            f"Ghi chú: {self.notes}\n"
+            f"ĐƠN VỊ GIÁ: mọi entry, stop loss, take profit đều là giá tuyệt đối tính bằng USD/oz. "
+            f"KHÔNG dùng pips, KHÔNG dùng điểm. Ví dụ: giá 4000 USD, stop loss 3990 USD nghĩa là cách 10 USD."
         )
 
 
@@ -55,9 +68,13 @@ def load_snapshot(path: str | Path) -> MarketSnapshot:
         ask=float(data["ask"]),
         indicators=data.get("indicators", {}),
         macro_news=data.get("macro_news", ""),
+        news_text=data.get("news_text", ""),
+        sentiment_text=data.get("sentiment_text", ""),
+        portfolio=data.get("portfolio", {}),
         open_positions=int(data.get("open_positions", 0)),
         daily_loss_usd=float(data.get("daily_loss_usd", 0.0)),
         account_balance=float(data.get("account_balance", 0.0)),
+        account_equity=float(data.get("account_equity", data.get("account_balance", 0.0))),
         notes=data.get("notes", ""),
     )
 
@@ -109,6 +126,21 @@ def atr(highs: list[float], lows: list[float], closes: list[float], period: int 
     if not trs:
         return 0.0
     return sum(trs[-period:]) / min(period, len(trs))
+
+
+def bollinger(closes: list[float], period: int = 20, std_mult: float = 2.0) -> dict:
+    """Bollinger Bands từ giá đóng cửa: SMA20 ± 2 độ lệch chuẩn."""
+    if len(closes) < period:
+        return {"bollinger_upper_usd": 0.0, "bollinger_middle_usd": 0.0, "bollinger_lower_usd": 0.0}
+    window = closes[-period:]
+    middle = sum(window) / period
+    variance = sum((v - middle) ** 2 for v in window) / period
+    band = std_mult * (variance ** 0.5)
+    return {
+        "bollinger_upper_usd": round(middle + band, 2),
+        "bollinger_middle_usd": round(middle, 2),
+        "bollinger_lower_usd": round(middle - band, 2),
+    }
 
 
 def macd(closes: list[float]) -> dict:

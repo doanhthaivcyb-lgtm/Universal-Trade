@@ -9,12 +9,15 @@ Mô tả chính xác cách vận hành, giao diện demo và các chức năng c
 
 ## AI trong phòng
 
-- Kỹ thuật: OpenAI
-- Vĩ mô / tin: Claude
-- Tâm lý / dòng tiền: Gemini
+- Kỹ thuật: Gemini
+- Cơ bản / tin tức: GPT-4o (lịch ForexFactory + RSS Fed)
+- Tâm lý: GPT-4o (COT vàng + điểm từ khóa tiêu đề)
 - Phản biện: OpenAI
 - Quản trị rủi ro (tư vấn): Claude
-- Trưởng phòng tổng hợp: Claude
+- Quản lý danh mục: Gemini
+- Trưởng phòng tổng hợp: Claude Opus
+
+Mọi entry, stop loss, take profit đều tính bằng USD/oz, không dùng pips.
 
 ## An toàn mặc định
 

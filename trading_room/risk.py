@@ -16,8 +16,24 @@ class RiskDecision:
     sl_distance: float = 0.0
 
 
+def portfolio_notional_usd(snapshot: MarketSnapshot, contract_size: float) -> float:
+    """Tổng giá trị danh nghĩa của mọi vị thế đang mở, tính bằng USD.
+
+    portfolio["positions"] là list dict {symbol, volume, price}. Nếu không có
+    dữ liệu danh mục (chạy thử JSON cũ) thì trả về 0, không bịa.
+    """
+    total = 0.0
+    for pos in (snapshot.portfolio or {}).get("positions", []):
+        try:
+            total += abs(float(pos.get("volume", 0.0))) * float(pos.get("price", 0.0)) * contract_size
+        except (TypeError, ValueError):
+            continue
+    return round(total, 2)
+
+
 def calculate_lot(cfg: Config, sl_distance: float) -> float:
-    """Lot = mức lỗ tối đa / (khoảng cách SL * contract size). Trần 1.5 lot, sàn 0.01."""
+    """Lot = mức lỗ tối đa (USD) / (khoảng cách SL tính bằng USD * contract size). Trần 1.5 lot, sàn 0.01.
+    Mọi khoảng cách đều tính bằng USD, KHÔNG dùng pips."""
     if sl_distance <= 0:
         return 0.0
     raw = cfg.risk.max_risk_usd_per_trade / (sl_distance * cfg.risk.contract_size)
@@ -55,9 +71,18 @@ def check_risk(cfg: Config, snapshot: MarketSnapshot, chief: AgentView, views: l
         opposite = sum(1 for d in analyst_dirs if d != chief.direction)
         if opposite > len(analyst_dirs) / 2 and chief.confidence < 0.8:
             return RiskDecision(False, "Đa số analyst ngược hướng trưởng phòng, độ tin cậy chưa đủ cao.")
-    # 8. SL/TP hợp lệ
+    # 8. SL/TP hợp lệ — tất cả đều là giá tuyệt đối bằng USD/oz, KHÔNG dùng pips.
+    # Kiểm tra thêm: SL/TP phải nằm trong khoảng giá hợp lý quanh giá hiện tại,
+    # để loại trường hợp AI trả về khoảng cách pips/điểm thay vì giá tuyệt đối.
     if chief.stop_loss is None or chief.take_profit is None:
         return RiskDecision(False, "Thiếu stop loss hoặc take profit.")
+    for label, value in (("stop_loss", chief.stop_loss), ("take_profit", chief.take_profit)):
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            return RiskDecision(False, f"{label} không phải số USD hợp lệ.")
+        if v <= 0 or abs(v - snapshot.price) > cfg.risk.max_sl_distance_usd * 5:
+            return RiskDecision(False, f"{label} {v} quá xa giá hiện tại {snapshot.price}, có thể AI đã trả về pips/khoảng cách thay vì giá USD.")
     price = snapshot.price
     if chief.direction == "BUY":
         sl_distance = price - float(chief.stop_loss)
@@ -75,4 +100,13 @@ def check_risk(cfg: Config, snapshot: MarketSnapshot, chief: AgentView, views: l
     lot = calculate_lot(cfg, sl_distance)
     if lot < cfg.risk.min_lot:
         return RiskDecision(False, "Lot tính ra dưới mức tối thiểu.")
+    # 10. Exposure danh mục: danh mục hiện tại + lệnh mới không vượt giới hạn.
+    existing_notional = portfolio_notional_usd(snapshot, cfg.risk.contract_size)
+    new_notional = lot * snapshot.price * cfg.risk.contract_size
+    if existing_notional + new_notional > cfg.risk.max_portfolio_notional_usd:
+        return RiskDecision(
+            False,
+            f"Exposure danh mục {existing_notional:,.0f} USD + lệnh mới {new_notional:,.0f} USD "
+            f"vượt giới hạn {cfg.risk.max_portfolio_notional_usd:,.0f} USD.",
+        )
     return RiskDecision(True, "Qua cửa rủi ro.", lot=lot, sl_distance=sl_distance)

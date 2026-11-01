@@ -28,7 +28,12 @@ def save_session(output_dir: Path, snapshot: MarketSnapshot, views: list[AgentVi
             }
             for v in views
         ],
-        "chief": {"direction": chief.direction, "confidence": chief.confidence},
+        "news_text": snapshot.news_text,
+        "sentiment_text": snapshot.sentiment_text,
+        "portfolio": snapshot.portfolio,
+        "units": "USD only for entry/stop_loss/take_profit, no pips",
+        "chief": {"direction": chief.direction, "confidence": chief.confidence,
+                  "entry_usd": chief.entry, "stop_loss_usd": chief.stop_loss, "take_profit_usd": chief.take_profit},
         "risk": {"allowed": risk.allowed, "reason": risk.reason, "lot": risk.lot},
         "order": order_message,
     }
@@ -39,7 +44,8 @@ def save_session(output_dir: Path, snapshot: MarketSnapshot, views: list[AgentVi
         f"# Phiên phòng trade AI — {stamp} UTC",
         "",
         f"Symbol: {snapshot.symbol} ({snapshot.timeframe}), giá {snapshot.price}, spread {snapshot.spread}",
-        f"Kết luận trưởng phòng: **{chief.direction}**, tin cậy {chief.confidence}",
+        f"Kết luận trưởng phòng: **{chief.direction}**, tin cậy {chief.confidence}, "
+        f"entry {chief.entry} USD, SL {chief.stop_loss} USD, TP {chief.take_profit} USD (đơn vị USD, không dùng pips)",
         f"Cửa rủi ro: {'CHO PHÉP' if risk.allowed else 'CHẶN'} — {risk.reason}, lot tính ra: {risk.lot}",
         f"Lệnh: {order_message}",
         "",

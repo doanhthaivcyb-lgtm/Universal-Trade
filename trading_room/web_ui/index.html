@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phòng trade AI — XAUUSD</title>
+<style>
+  :root{--bg:#f4f6f8;--card:#fff;--ink:#17202a;--muted:#5d6d7e;--line:#d5dce3;--green:#1e8449;--red:#c0392b;--amber:#b7950b;--blue:#1a5276;--buy:#1e8449;--sell:#c0392b}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--ink);font-size:16px;line-height:1.5}
+  header{position:sticky;top:0;z-index:5;background:#17202a;color:#fff;padding:14px 18px}
+  header h1{margin:0;font-size:20px}
+  header p{margin:4px 0 0;color:#d5dce3;font-size:14px}
+  .wrap{max-width:1180px;margin:0 auto;padding:16px}
+  .grid{display:grid;grid-template-columns:1fr;gap:14px}
+  @media(min-width:900px){.grid{grid-template-columns:1.05fr 1.35fr 1fr}.wide{grid-column:1/-1}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card h2{margin:0 0 10px;font-size:17px}
+  .card h3{margin:16px 0 6px;font-size:15px}
+  .muted{color:var(--muted);font-size:14px}
+  .badge{display:inline-block;padding:3px 10px;border-radius:999px;font-weight:700;font-size:13px;color:#fff;background:#5d6d7e}
+  .badge.buy{background:var(--buy)} .badge.sell{background:var(--sell)} .badge.dry{background:var(--green)} .badge.demo{background:var(--amber)} .badge.live{background:var(--red)} .badge.stop{background:var(--red)}
+  .big{font-size:26px;font-weight:800}
+  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+  button{font-size:16px;padding:12px 16px;border-radius:10px;border:1px solid var(--line);background:#fff;cursor:pointer;min-height:48px}
+  button.primary{background:var(--blue);color:#fff;border-color:var(--blue);font-weight:700}
+  button.danger{background:var(--red);color:#fff;border-color:var(--red);font-weight:700}
+  button:disabled{opacity:.55;cursor:not-allowed}
+  select,input{font-size:16px;padding:10px;border-radius:8px;border:1px solid var(--line);min-height:44px}
+  label{display:block;font-size:14px;font-weight:600;margin:10px 0 4px}
+  .view{border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0}
+  .view header{position:static;background:none;color:var(--ink);padding:0}
+  .conf{height:8px;background:#e5e8e8;border-radius:99px;overflow:hidden;margin:6px 0}
+  .conf span{display:block;height:100%;background:var(--blue)}
+  .check{display:flex;gap:8px;align-items:flex-start;padding:8px 0;border-bottom:1px solid #eef2f3}
+  .check:last-child{border-bottom:0}
+  .ok{color:var(--green);font-weight:800} .bad{color:var(--red);font-weight:800}
+  pre{white-space:pre-wrap;word-break:break-word;background:#f8f9f9;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:14px;max-height:320px;overflow:auto}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:8px;border-bottom:1px solid #eef2f3;vertical-align:top}
+  .session-btn{width:100%;text-align:left}
+  .alert{background:#fdedec;border:1px solid #f5b7b1;border-radius:10px;padding:12px}
+  .note{background:#fef9e7;border:1px solid #f9e79f;border-radius:10px;padding:12px}
+  .kv{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .kv div{background:#f8f9f9;border-radius:8px;padding:8px}
+  .kv b{display:block;font-size:13px;color:var(--muted)}
+  footer{color:var(--muted);font-size:14px;padding:8px 0 24px}
+  :focus-visible{outline:3px solid #2e86c1;outline-offset:2px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Phòng trade AI — XAUUSD</h1>
+  <p>Bấm nút thay cho gõ lệnh. Mọi giá SL/TP tính bằng USD, không dùng pips.</p>
+</header>
+<main class="wrap">
+  <div id="banner" role="alert"></div>
+
+  <section class="card" aria-label="Trạng thái và điều khiển">
+    <div class="row">
+      <span id="modeBadge" class="badge dry">DRY-RUN</span>
+      <span id="symbolText" class="big">XAUUSD</span>
+      <span id="priceText" class="muted">Chưa có giá từ phiên nào</span>
+      <span id="stopBadge" class="badge" hidden>ĐÃ DỪNG (file STOP)</span>
+    </div>
+    <p id="phaseText" class="muted" aria-live="polite">Chưa chạy phiên nào.</p>
+    <div class="row">
+      <label style="margin:0">Nguồn dữ liệu
+        <select id="sourceSel"><option value="mt5">MT5 realtime</option><option value="json">File thử JSON</option></select>
+      </label>
+      <label style="margin:0"><input type="checkbox" id="mockChk" checked> Dùng AI giả (không tốn phí, không cần key)</label>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="runBtn">▶ Chạy 1 phiên</button>
+      <button id="loopBtn">↻ Chạy lặp lại</button>
+      <button id="previewBtn">Làm mới dữ liệu MT5</button>
+      <button class="danger" id="stopBtn">⛔ DỪNG KHẨN CẤP</button>
+      <button id="clearStopBtn" hidden>Gỡ file STOP để chạy lại</button>
+    </div>
+    <p class="muted">Chạy 1 phiên = lấy dữ liệu mới → các AI thảo luận → cửa rủi ro → ghi nhật ký. Không có nút đặt lệnh riêng. Nếu cửa rủi ro cho phép và chế độ không phải dry-run, executor mới đặt lệnh như khi chạy bằng dòng lệnh.</p>
+  </section>
+
+  <div class="grid">
+    <section class="card" aria-label="Dữ liệu thị trường">
+      <h2>Dữ liệu thị trường</h2>
+      <div id="snapshotBox"><p class="muted">Chưa có dữ liệu. Bấm “Làm mới dữ liệu MT5” hoặc “Chạy 1 phiên”.</p></div>
+      <h3>Tin tức và lịch kinh tế</h3>
+      <div id="newsBox"><p class="muted">Chưa lấy tin tức. Tin chỉ lấy khi chạy phiên thật (không phải AI giả), hoặc bấm nút bên dưới.</p></div>
+      <button id="enrichBtn">Lấy tin tức + COT ngay</button>
+      <h3>Sentiment</h3>
+      <div id="sentimentBox"><p class="muted">Chưa có dữ liệu sentiment.</p></div>
+      <h3>Danh mục toàn tài khoản</h3>
+      <div id="portfolioBox"><p class="muted">Chưa có dữ liệu danh mục.</p></div>
+    </section>
+
+    <section class="card" aria-label="Phòng thảo luận">
+      <h2>Phòng thảo luận</h2>
+      <div id="viewsBox"><p class="muted">Chưa có phiên nào. Kết quả thảo luận sẽ hiện ở đây sau khi chạy.</p></div>
+    </section>
+
+    <section class="card" aria-label="Kết luận và cửa rủi ro">
+      <h2>Kết luận trưởng phòng</h2>
+      <div id="chiefBox"><p class="muted">Chưa có kết luận.</p></div>
+      <h3>Cửa rủi ro cứng (10 kiểm tra)</h3>
+      <div id="checksBox"><p class="muted">Chưa chạy kiểm tra nào.</p></div>
+      <h3>Lệnh</h3>
+      <p id="orderText" class="muted">Chưa có lệnh.</p>
+    </section>
+
+    <section class="card wide" aria-label="Lịch sử phiên">
+      <h2>Lịch sử phiên đã chạy</h2>
+      <button id="refreshHistBtn">Làm mới lịch sử</button>
+      <div id="historyBox"><p class="muted">Chưa tải lịch sử.</p></div>
+      <h3>Chi tiết phiên đã chọn</h3>
+      <div id="detailBox"><p class="muted">Bấm một phiên trong lịch sử để xem lại toàn bộ.</p></div>
+    </section>
+
+    <section class="card" aria-label="Key và an toàn">
+      <h2>Key AI và an toàn</h2>
+      <div id="keysBox"><p class="muted">Đang kiểm tra...</p></div>
+      <p class="muted">Giao diện chỉ hiện có hay chưa có key, không bao giờ hiện giá trị key. Muốn điền key, mở file <code>.env</code> bằng Notepad trên máy Windows, không dán key vào đây hay vào chat.</p>
+      <p class="muted">Chế độ live bị khóa trên giao diện web. Muốn bật live vẫn phải sửa tay <code>config.yaml</code> và <code>.env</code>, và giao diện sẽ từ chối chạy nếu live đã bật.</p>
+    </section>
+
+    <section class="card" aria-label="Cấu hình">
+      <h2>Cấu hình chạy</h2>
+      <form id="configForm">
+        <label>Symbol trên MT5 <input id="cfgSymbol" required></label>
+        <label>Khung thời gian
+          <select id="cfgTf"><option>M1</option><option>M5</option><option>M15</option><option>M30</option><option>H1</option><option>H4</option><option>D1</option></select>
+        </label>
+        <label>Chế độ chạy (chỉ xem, không đổi sang live tại đây) <input id="cfgMode" disabled></label>
+        <label>Số vị thế tối đa <input id="cfgMaxPos" type="number" min="1" max="5" step="1"></label>
+        <label>Chu kỳ lặp lại, giây <input id="cfgLoop" type="number" min="60" max="86400" step="60"></label>
+        <label><input type="checkbox" id="cfgNews"> Bật lấy tin tức</label>
+        <label><input type="checkbox" id="cfgSent"> Bật lấy sentiment (COT)</label>
+        <h3>Giới hạn rủi ro (USD)</h3>
+        <label>Lỗ tối đa 1 lệnh <input id="rMaxRisk" type="number" step="10" required></label>
+        <label>Lỗ tối đa trong ngày <input id="rMaxDaily" type="number" step="100" required></label>
+        <label>Lot tối đa 1 lệnh <input id="rMaxLot" type="number" step="0.01" required></label>
+        <label>Độ tin cậy tối thiểu <input id="rMinConf" type="number" step="0.05" required></label>
+        <label>Khoảng cách SL tối thiểu, USD <input id="rMinSl" type="number" step="1" required></label>
+        <label>Khoảng cách SL tối đa, USD <input id="rMaxSl" type="number" step="1" required></label>
+        <label>Tỉ lệ lãi/lỗ tối thiểu <input id="rMinRr" type="number" step="0.1" required></label>
+        <label>Spread tối đa, USD <input id="rMaxSpread" type="number" step="0.05" required></label>
+        <label>Giá chạy tối đa cho phép, USD <input id="rMaxMove" type="number" step="1" required></label>
+        <label>Exposure danh mục tối đa, USD <input id="rMaxExp" type="number" step="10000" required></label>
+        <button class="primary" type="submit">Lưu cấu hình</button>
+      </form>
+      <p id="configMsg" class="muted">Lưu sẽ tạo bản sao <code>config.yaml.bak</code>. Đổi model AI vẫn sửa tay trong <code>config.yaml</code>.</p>
+    </section>
+  </div>
+  <footer>Phòng trade AI chỉ chạy trên máy local. Kiểm tra nhật ký trong thư mục <code>output/</code> sau mỗi phiên. Khi chưa chắc chắn, chọn HOLD và giữ chế độ dry-run.</footer>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function badge(dir){return dir==="BUY"?'<span class="badge buy">BUY</span>':dir==="SELL"?'<span class="badge sell">SELL</span>':'<span class="badge">HOLD</span>'}
+async function api(path,opts){const r=await fetch(path,opts);const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||("Lỗi "+r.status));return d}
+function showBanner(msg,kind){const b=$("banner");b.innerHTML=msg?`<div class="${kind==="error"?"alert":"note"}" role="alert">${esc(msg)}</div>`:""}
+function renderSnapshot(s){
+  if(!s)return;
+  $("priceText").textContent=`Giá ${s.price} • Bid ${s.bid} / Ask ${s.ask} • Spread ${s.spread} USD • ${s.source} lúc ${s.captured_at||"không rõ"}`;
+  const ind=s.indicators||{};
+  $("snapshotBox").innerHTML=`<div class="kv">
+    <div><b>RSI14</b>${esc(ind.rsi14??"—")}</div><div><b>ATR14 (USD)</b>${esc(ind.atr14_usd??"—")}</div>
+    <div><b>EMA20</b>${esc(ind.ema20??"—")}</div><div><b>EMA50</b>${esc(ind.ema50??"—")}</div>
+    <div><b>Bollinger trên</b>${esc(ind.bollinger_upper_usd??"—")}</div><div><b>Bollinger dưới</b>${esc(ind.bollinger_lower_usd??"—")}</div>
+    <div><b>Hỗ trợ</b>${esc((ind.support||[]).join(", "))}</div><div><b>Kháng cự</b>${esc((ind.resistance||[]).join(", "))}</div>
+    <div><b>Vị thế mở (symbol)</b>${esc(s.open_positions)}</div><div><b>Lỗ trong ngày</b>${esc(s.daily_loss_usd)} USD</div>
+    <div><b>Số dư</b>${esc(s.account_balance)} USD</div><div><b>Equity</b>${esc(s.account_equity)} USD</div></div>
+    <p class="muted">${esc(s.notes||"")}</p>`;
+  $("newsBox").innerHTML=s.news_text?`<pre>${esc(s.news_text)}</pre>`:'<p class="muted">Chưa có tin tức.</p>';
+  $("sentimentBox").innerHTML=s.sentiment_text?`<pre>${esc(s.sentiment_text)}</pre>`:'<p class="muted">Chưa có dữ liệu sentiment.</p>';
+  const p=s.portfolio||{};
+  $("portfolioBox").innerHTML=p.positions?`<p>Tổng giá trị danh mục: <b>${esc(p.gross_notional_usd??0)} USD</b> • ${esc(p.position_count??0)} vị thế • Lãi/lỗ đang nổi: ${esc(p.floating_profit_usd??0)} USD</p><pre>${esc(JSON.stringify(p.positions||[],null,2))}</pre>`:'<p class="muted">Chưa có dữ liệu danh mục.</p>';
+}
+function renderViews(views){
+  if(!views||!views.length){$("viewsBox").innerHTML='<p class="muted">Chưa có phiên nào.</p>';return}
+  $("viewsBox").innerHTML=views.map(v=>`<article class="view"><header><div class="row"><b>${esc(v.name)}</b>${badge(v.direction)}<span class="muted">${esc(v.provider)}/${esc(v.model)}</span></div></header>
+    <div class="conf" aria-label="Độ tin cậy ${v.confidence}"><span style="width:${Math.round((v.confidence||0)*100)}%"></span></div>
+    <p>Độ tin cậy: <b>${esc(v.confidence)}</b>${v.parse_ok===false?' • <span class="bad">JSON lỗi</span>':''}</p>
+    <p>${esc(v.reasoning||"")}</p><p class="muted">Điểm vô hiệu: ${esc(v.invalidation||"")}</p>
+    ${(v.evidence||[]).length?`<ul>${v.evidence.map(e=>`<li>${esc(e)}</li>`).join("")}</ul>`:""}</article>`).join("");
+}
+function renderChief(chief,risk,order){
+  if(!chief){$("chiefBox").innerHTML='<p class="muted">Chưa có kết luận.</p>';return}
+  $("chiefBox").innerHTML=`<div class="row"><b>${esc(chief.name)}</b>${badge(chief.direction)}<span>Tin cậy ${esc(chief.confidence)}</span></div>
+    <div class="kv" style="margin-top:10px"><div><b>Entry (USD)</b>${esc(chief.entry??"—")}</div><div><b>Stop loss (USD)</b>${esc(chief.stop_loss??"—")}</div><div><b>Take profit (USD)</b>${esc(chief.take_profit??"—")}</div><div><b>Lot tính ra</b>${esc(risk?risk.lot:0)}</div></div>
+    <p>${esc(chief.reasoning||"")}</p><p class="muted">Điểm vô hiệu: ${esc(chief.invalidation||"")}</p>`;
+  $("orderText").textContent=order||"Chưa có lệnh.";
+  if(risk){
+    $("checksBox").innerHTML=(risk.checks||[]).map(c=>`<div class="check"><span class="${c.passed?"ok":"bad"}">${c.passed?"✓":"✕"}</span><div><b>${esc(c.name)}</b><br><span class="muted">${esc(c.detail||"")}</span></div></div>`).join("")||`<p>${esc(risk.reason||"")}</p>`;
+  }
+}
+function renderResult(r){
+  if(!r)return;
+  renderSnapshot(r.snapshot);renderViews(r.views);renderChief(r.chief,r.risk,r.order);
+}
+async function refreshStatus(){
+  try{
+    const s=await api("/api/status");
+    const badgeEl=$("modeBadge");
+    badgeEl.textContent=s.mode==="live"?"LIVE":s.mode==="demo"?"DEMO":"DRY-RUN";
+    badgeEl.className="badge "+(s.mode==="live"?"live":s.mode==="demo"?"demo":"dry");
+    $("symbolText").textContent=s.symbol+" • "+s.timeframe;
+    $("stopBadge").hidden=!s.stop_exists;$("clearStopBtn").hidden=!s.stop_exists;
+    $("phaseText").textContent=s.phase+(s.error?" Lỗi: "+s.error:"");
+    showBanner(s.live_enabled?"Chế độ LIVE đang bật. Giao diện web sẽ từ chối chạy. Tắt live trong config.yaml và .env.":"",s.live_enabled?"error":"note");
+    $("keysBox").innerHTML=["openai","gemini","anthropic"].map(k=>`<p>${k.toUpperCase()}: <b>${s.keys[k]?"Đã có key":"Chưa có key"}</b></p>`).join("");
+    const busy=s.running;
+    $("runBtn").disabled=busy;$("loopBtn").disabled=busy;$("previewBtn").disabled=busy;
+    $("loopBtn").textContent=s.looping?"Đang chạy lặp — bấm DỪNG KHẨN CẤP để dừng":"↻ Chạy lặp lại";
+  }catch(e){$("phaseText").textContent="Không kết nối được máy chủ giao diện: "+e.message}
+}
+async function refreshState(){
+  await refreshStatus();
+  try{const d=await api("/api/run-state");if(d.result)renderResult(d.result)}catch(e){}
+}
+async function loadHistory(){
+  try{
+    const d=await api("/api/sessions");
+    $("historyBox").innerHTML=d.sessions.length?`<table><thead><tr><th>Thời gian (UTC)</th><th>Trưởng phòng</th><th>Cửa rủi ro</th><th>Lệnh</th><th></th></tr></thead><tbody>${d.sessions.map(s=>`<tr><td>${esc(s.timestamp_utc)}</td><td>${badge(s.chief_direction)} ${esc(s.chief_confidence)}</td><td>${s.risk_allowed?"CHO PHÉP":"CHẶN"} — ${esc(s.risk_reason)}</td><td>${esc(s.order)}</td><td><button class="session-btn" data-name="${esc(s.name)}">Xem</button></td></tr>`).join("")}</tbody></table>`:'<p class="muted">Chưa có phiên nào được lưu.</p>';
+    document.querySelectorAll(".session-btn").forEach(b=>b.onclick=async()=>{
+      const d=await api("/api/session?name="+encodeURIComponent(b.dataset.name));
+      $("detailBox").innerHTML=`<pre>${esc(JSON.stringify(d,null,2))}</pre>`;
+      const chief=d.views?d.views[d.views.length-1]:null;
+      renderSnapshot({symbol:d.symbol,timeframe:d.timeframe,price:0,bid:"",ask:"",spread:"",source:"",captured_at:d.timestamp_utc,indicators:{},macro_news:"",news_text:d.news_text||"",sentiment_text:d.sentiment_text||"",portfolio:d.portfolio||{},open_positions:0,daily_loss_usd:0,account_balance:0,account_equity:0,notes:"Xem từ file nhật ký đã lưu."});
+      renderViews(d.views||[]);renderChief(chief,d.risk,d.order);
+    });
+  }catch(e){$("historyBox").innerHTML='<p class="alert">Không tải được lịch sử: '+esc(e.message)+"</p>"}
+}
+async function loadConfig(){
+  try{
+    const c=await api("/api/config");
+    $("cfgSymbol").value=c.symbol;$("cfgTf").value=c.timeframe;$("cfgMode").value=c.mode;$("cfgMaxPos").value=c.max_open_positions;$("cfgLoop").value=c.loop_interval_seconds;
+    $("cfgNews").checked=!!c.news_enabled;$("cfgSent").checked=!!c.sentiment_enabled;
+    const r=c.risk||{};$("rMaxRisk").value=r.max_risk_usd_per_trade;$("rMaxDaily").value=r.max_daily_loss_usd;$("rMaxLot").value=r.max_lot_per_order;$("rMinConf").value=r.min_confidence;$("rMinSl").value=r.min_sl_distance_usd;$("rMaxSl").value=r.max_sl_distance_usd;$("rMinRr").value=r.min_reward_risk;$("rMaxSpread").value=r.max_spread_usd;$("rMaxMove").value=r.max_price_move_usd;$("rMaxExp").value=r.max_portfolio_notional_usd;
+  }catch(e){$("configMsg").textContent="Không tải được cấu hình: "+e.message}
+}
+$("runBtn").onclick=async()=>{showBanner("");try{const r=await api("/api/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source:$("sourceSel").value,mock:$("mockChk").checked,loop:false})});if(!r.started)showBanner(r.error,"error");pollRun()}catch(e){showBanner(e.message,"error")}};
+$("loopBtn").onclick=async()=>{showBanner("");try{const r=await api("/api/run",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({source:$("sourceSel").value,mock:$("mockChk").checked,loop:true})});if(!r.started)showBanner(r.error,"error");pollRun()}catch(e){showBanner(e.message,"error")}};
+$("stopBtn").onclick=async()=>{try{await api("/api/stop",{method:"POST"});await refreshStatus();showBanner("Đã tạo file STOP. Phiên đang chạy sẽ dừng sau bước hiện tại, vòng lặp sẽ dừng.","note")}catch(e){showBanner(e.message,"error")}};
+$("clearStopBtn").onclick=async()=>{try{await api("/api/clear-stop",{method:"POST"});await refreshStatus()}catch(e){showBanner(e.message,"error")}};
+$("previewBtn").onclick=async()=>{$("phaseText").textContent="Đang lấy dữ liệu MT5...";try{const d=await api("/api/snapshot");renderSnapshot(d.snapshot);$("phaseText").textContent="Đã lấy dữ liệu MT5 mới nhất."}catch(e){showBanner("Không lấy được dữ liệu MT5: "+e.message,"error");await refreshStatus()}};
+$("enrichBtn").onclick=async()=>{$("phaseText").textContent="Đang lấy tin tức và COT, có thể mất tới 20 giây...";try{const d=await api("/api/snapshot?enrich=1");renderSnapshot(d.snapshot);$("phaseText").textContent="Đã lấy tin tức và COT."}catch(e){showBanner("Không lấy được tin/COT: "+e.message,"error");await refreshStatus()}};
+$("refreshHistBtn").onclick=loadHistory;
+$("configForm").onsubmit=async ev=>{ev.preventDefault();const body={symbol:$("cfgSymbol").value,timeframe:$("cfgTf").value,max_open_positions:Number($("cfgMaxPos").value),loop_interval_seconds:Number($("cfgLoop").value),news_enabled:$("cfgNews").checked,sentiment_enabled:$("cfgSent").checked,risk:{max_risk_usd_per_trade:Number($("rMaxRisk").value),max_daily_loss_usd:Number($("rMaxDaily").value),max_lot_per_order:Number($("rMaxLot").value),min_confidence:Number($("rMinConf").value),min_sl_distance_usd:Number($("rMinSl").value),max_sl_distance_usd:Number($("rMaxSl").value),min_reward_risk:Number($("rMinRr").value),max_spread_usd:Number($("rMaxSpread").value),max_price_move_usd:Number($("rMaxMove").value),max_portfolio_notional_usd:Number($("rMaxExp").value)}};
+  try{const r=await api("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});$("configMsg").textContent=r.ok?"Đã lưu cấu hình. Bản sao cũ ở config.yaml.bak.":"Lỗi: "+(r.error||"");if(r.ok)await refreshStatus()}catch(e){$("configMsg").textContent="Lỗi: "+e.message}};
+let pollTimer=null;
+function pollRun(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInterval(async()=>{await refreshState();try{const d=await api("/api/run-state");if(!d.running){clearInterval(pollTimer);await loadHistory()}}catch(e){}},3000)}
+refreshState();loadHistory();loadConfig();
+setInterval(refreshStatus,10000);
+</script>
+</body>
+</html>

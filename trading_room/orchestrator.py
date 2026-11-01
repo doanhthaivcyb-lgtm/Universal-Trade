@@ -64,14 +64,39 @@ def enrich_snapshot(cfg: Config, snapshot: MarketSnapshot, mock: bool = False) -
     return snapshot
 
 
-def run_room(cfg: Config, snapshot: MarketSnapshot, mock: bool = False, canned: dict | None = None):
-    """Chạy 1 phiên: lấy tin/sentiment, vòng 1 độc lập, vòng 2 phản biện, trưởng phòng chốt, cửa rủi ro."""
+def _emit(on_progress, event: dict) -> None:
+    """Gửi sự kiện tiến độ cho giao diện, không làm hỏng phiên nếu callback lỗi."""
+    if on_progress is None:
+        return
+    try:
+        on_progress(event)
+    except Exception:
+        pass
+
+
+def run_room(cfg: Config, snapshot: MarketSnapshot, mock: bool = False, canned: dict | None = None,
+             on_progress=None):
+    """Chạy 1 phiên: lấy tin/sentiment, vòng 1 độc lập, vòng 2 phản biện, trưởng phòng chốt, cửa rủi ro.
+
+    `on_progress` (tùy chọn) nhận dict sự kiện để giao diện hiện trực tiếp
+    từng AI đang làm gì: {"phase": ..., "name": ..., "status": ..., "view": AgentView|None}.
+    Callback có thể chạy từ luồng worker, nên giao diện phải tự đưa về luồng UI.
+    """
+    _emit(on_progress, {"phase": "news", "name": "", "status": "Đang lấy tin tức và sentiment..."})
     snapshot = enrich_snapshot(cfg, snapshot, mock=mock)
+    _emit(on_progress, {"phase": "snapshot", "name": "", "status": "Đã có dữ liệu MT5, tin tức và sentiment."})
     clients = build_clients(cfg, mock=mock, canned=canned)
 
+    def _run_one(name: str, extra: str = ""):
+        _emit(on_progress, {"phase": "agent_start", "name": name, "status": "Đang phân tích..."})
+        view = run_agent(name, clients[name], snapshot, extra=extra)
+        _emit(on_progress, {"phase": "agent_done", "name": name, "status": "Đã xong.", "view": view})
+        return view
+
     # Vòng 1: mỗi analyst phân tích độc lập, chạy song song.
+    _emit(on_progress, {"phase": "round1", "name": "", "status": "Vòng 1: phân tích độc lập."})
     with ThreadPoolExecutor(max_workers=len(ANALYST_NAMES)) as pool:
-        views = list(pool.map(lambda n: run_agent(n, clients[n], snapshot), ANALYST_NAMES))
+        views = list(pool.map(lambda n: _run_one(n), ANALYST_NAMES))
 
     # Vòng 2: mỗi analyst đọc tóm tắt của các analyst khác và chốt lại ngắn gọn.
     debate_text = "Ý kiến vòng 1 của các AI khác:\n" + "\n".join(_summary(v) for v in views)
@@ -80,10 +105,12 @@ def run_room(cfg: Config, snapshot: MarketSnapshot, mock: bool = False, canned: 
         + "\n\nHãy phản hồi ngắn: bạn giữ hay đổi hướng, điểm nào của AI khác khiến bạn nghi ngờ nhất? "
         "Trả về JSON như vòng 1."
     )
+    _emit(on_progress, {"phase": "round2", "name": "", "status": "Vòng 2: đọc ý kiến của nhau và phản biện."})
     with ThreadPoolExecutor(max_workers=len(ANALYST_NAMES)) as pool:
-        views = list(pool.map(lambda n: run_agent(n, clients[n], snapshot, extra=extra), ANALYST_NAMES))
+        views = list(pool.map(lambda n: _run_one(n, extra), ANALYST_NAMES))
 
     # Trưởng phòng tổng hợp.
+    _emit(on_progress, {"phase": "chief_start", "name": "chief", "status": "Trưởng phòng đang tổng hợp..."})
     chief_input = (
         snapshot.to_prompt_text()
         + "\n\nKết quả vòng 2:\n"
@@ -108,6 +135,9 @@ def run_room(cfg: Config, snapshot: MarketSnapshot, mock: bool = False, canned: 
         chief = AgentView(name="chief", provider=chief_client.provider, model=chief_client.model,
                           reasoning=f"Lỗi JSON trưởng phòng: {exc}", raw_text=chief_response.text, parse_ok=False)
 
+    _emit(on_progress, {"phase": "chief_done", "name": "chief", "status": "Trưởng phòng đã chốt.", "view": chief})
+    _emit(on_progress, {"phase": "risk", "name": "", "status": "Đang kiểm tra cửa rủi ro cứng..."})
     all_views = views + [chief]
     risk_decision: RiskDecision = check_risk(cfg, snapshot, chief, views)
+    _emit(on_progress, {"phase": "done", "name": "", "status": "Đã kiểm tra cửa rủi ro xong."})
     return chief, all_views, risk_decision

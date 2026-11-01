@@ -1,6 +1,6 @@
 # Phòng trade AI — Mô tả vận hành, giao diện demo và các chức năng chính
 
-- **Phiên bản:** v1.2 theo plan `ai_trading_room_plan.md` (thêm News, Sentiment, Portfolio Manager; TP chỉ tính bằng USD, không dùng pips), làm ở local ngày 2026-11-01, chưa đẩy lên repo trong lần sửa này.
+- **Phiên bản:** v1.4 (app desktop, theo yêu cầu ngày 2026-11-01: app đầy đủ giao diện, bấm là mở), trước đó v1.3 giao diện web local, v1.2 theo plan `ai_trading_room_plan.md` (thêm News, Sentiment, Portfolio Manager; TP chỉ tính bằng USD, không dùng pips), làm ở local ngày 2026-11-01, chưa đẩy lên repo trong lần sửa này.
 - **Thị trường:** XAUUSD, khung chính tạm là M15 trong `config.yaml`, chờ Thái chốt M15 hay H1.
 - **Nhà cung cấp AI đã chốt:** OpenAI + Gemini + Claude (Thái nói có đủ key ngày 2026-11-01). Phân vai và model theo plan, xem mục 3.
 - **Đơn vị giá bắt buộc:** mọi entry, stop loss, take profit đều là giá tuyệt đối tính bằng USD/oz. KHÔNG dùng pips, KHÔNG dùng điểm.
@@ -379,10 +379,12 @@ Cửa rủi ro: CHO PHÉP — Qua cửa rủi ro. (lot 0.5)
 Đã lưu nhật ký phiên: output/session_20261101_040000.json
 ```
 
-### 9.2. Giao diện demo web — bản thiết kế, chưa code
+### 9.2. Giao diện web local — đã code từ v1.3
 
-Phần này mô tả chính xác giao diện sẽ làm tiếp nếu Thái muốn xem trực quan thay
-vì dòng lệnh. **Chưa có code web trong v1**, tránh hiểu nhầm là đã chạy được.
+Giao diện web chạy trên máy local của Thái, chỉ dùng thư viện chuẩn Python,
+không thêm phụ thuộc mới. Chạy bằng `py -3.13 main.py --web` rồi mở
+`http://127.0.0.1:8000` trong trình duyệt. Máy chủ chỉ nghe trên `127.0.0.1`,
+không mở ra mạng ngoài.
 
 Bố cục 1 màn hình, chia 4 vùng:
 
@@ -396,7 +398,7 @@ Bố cục 1 màn hình, chia 4 vùng:
    hướng, độ tin cậy, lý do ngắn. Bên dưới là khung chat tranh luận vòng 2.
    Khi đang chạy, thẻ nào đang gọi API thì hiện trạng thái "đang phân tích...".
 4. **Vùng phải — Kết luận và lệnh:** thẻ trưởng phòng (hướng, tin cậy, entry,
-   SL, TP, điểm vô hiệu), bảng 9 kiểm tra rủi ro (từng dòng ĐẠT/CHẶN kèm lý do),
+   SL, TP, điểm vô hiệu), bảng 10 kiểm tra rủi ro lấy đúng từ `RiskDecision.checks` (từng dòng ĐẠT/CHẶN kèm lý do),
    lot tính ra, nút `Xác nhận đặt lệnh` chỉ hiện khi cửa rủi ro cho phép và
    chế độ không phải `dry_run`. Bên dưới là lịch sử các phiên đã chạy.
 
@@ -404,7 +406,59 @@ Trạng thái hiển thị bắt buộc: đang lấy dữ liệu MT5, đang gọ
 ro, đã xong (vào lệnh / HOLD / bị chặn kèm lý do), và lỗi (mất kết nối MT5, mất mạng, hết key,
 JSON lỗi). Không có trạng thái nào tự động đặt lệnh mà không hiện rõ lý do.
 
+Quy tắc an toàn riêng của giao diện web (v1.3, code ở `trading_room/web_ui.py`
+và `trading_room/web_ui/index.html`):
+
+- Chỉ hiện key AI dưới dạng có/không có, không bao giờ hiện giá trị key, không
+  cho sửa key trên web. Điền key bằng cách sửa file `.env` trên máy.
+- Không cho đổi chế độ sang `live` trên web; nếu live đã bật thì web từ chối chạy.
+- Sửa cấu hình trên web chỉ cho các trường an toàn (symbol, khung, giới hạn rủi
+  ro, exposure, bật/tắt tin và sentiment), có kiểm tra khoảng giá trị, và tự
+  tạo bản sao `config.yaml.bak`. Đổi model AI vẫn sửa tay trong `config.yaml`.
+- Nút `DỪNG KHẨN CẤP` tạo file `STOP` như CLI; nút gỡ STOP xóa file đó.
+  Chỉ 1 phiên chạy tại một thời điểm, vòng lặp kiểm tra file STOP sau mỗi phiên.
+
 ---
+
+### 9.3. App desktop — đã code từ v1.4 (cách dùng chính, dễ nhất)
+
+Thái muốn app đầy đủ giao diện, chỉ cần bấm vào là hiện đầy đủ thông tin và
+thấy rõ các AI đang làm gì. App desktop dùng Tkinter (thư viện chuẩn của
+Python, không cài thêm gì), code ở `trading_room/desktop_app.py`, chạy bằng
+cách **bấm đúp file `run_app.bat`** ở thư mục gốc của dự án, hoặc
+`py -3.13 main.py --app`. Không cần mở trình duyệt, không cần gõ lệnh.
+Muốn có biểu tượng trên màn hình desktop: bấm chuột phải vào `run_app.bat`
+> Send to > Desktop (create shortcut), rồi đổi tên shortcut thành
+"Phòng trade AI".
+
+App mở thành 1 cửa sổ với 3 tab:
+
+- **Tab Phòng trade:** phía trên là trạng thái, giá, chế độ và thanh quy trình
+  7 bước (lấy MT5 → tin/COT → vòng 1 → vòng 2 → trưởng phòng → cửa rủi ro →
+  executor/nhật ký), bước đang chạy sáng lên. Cột trái hiện dữ liệu MT5, tin
+  tức, sentiment và danh mục. Cột giữa là 7 thẻ AI: mỗi thẻ hiện trạng thái
+  đang chờ / đang phân tích / đang tranh luận / đã xong, hướng, độ tin cậy,
+  lý do, và nút "Xem cách AI này làm việc". Cột phải hiện kết luận trưởng
+  phòng, bảng 10 kiểm tra cửa rủi ro và kết quả lệnh. Trạng thái từng AI được
+  cập nhật trực tiếp trong lúc chạy nhờ callback tiến độ trong `run_room`
+  (`on_progress`), không phải đợi xong phiên mới hiện.
+- **Tab Nhật ký & lịch sử:** danh sách các phiên đã chạy, bấm vào xem lại
+  toàn bộ file nhật ký JSON, đồng thời các thẻ AI và cửa rủi ro hiện lại
+  kết quả của phiên đó.
+- **Tab Cấu hình & an toàn:** sửa symbol, khung, giới hạn rủi ro, bật/tắt tin
+  và sentiment, lưu kèm bản sao `config.yaml.bak`; hiện trạng thái key
+  (có/không có, không hiện giá trị), nút mở `.env` bằng Notepad.
+
+Nút "Xem cách AI này làm việc" mở cửa sổ riêng giải thích đúng AI đó làm gì,
+đọc dữ liệu nào, lệnh hệ thống (system prompt) đã gửi, snapshot đã gửi trong
+phiên gần nhất, và câu trả lời thô của AI (raw JSON). Nhờ đó Thái thấy được
+cả *quy trình* chứ không chỉ kết quả cuối.
+
+Quy tắc an toàn của app giống bản web: không hiện giá trị key, không sửa key,
+không đổi sang live, chạy phiên đúng luồng CLI, không có nút đặt lệnh riêng,
+chỉ 1 phiên tại một thời điểm, nút dừng khẩn cấp tạo file `STOP`.
+
+Giao diện web ở mục 9.2 và CLI ở mục 9.1 vẫn giữ nguyên để dùng khi cần.
 
 ## 10. Các chức năng chính
 
@@ -457,6 +511,10 @@ ai_trading_room/
     risk.py
     executor.py
     journal.py
+    desktop_app.py         # app desktop Tkinter, chỉ stdlib
+    web_ui.py              # máy chủ web local, chỉ stdlib
+    web_ui/
+      index.html         # giao diện 1 trang, tiếng Việt
 ```
 
 ---
@@ -504,4 +562,4 @@ ai_trading_room/
    `XAUUSD`, nếu broker là Valetax thì có thể phải đổi thành `XAUUSD.vx`).
 3. Mức lỗ tối đa mỗi lệnh và mỗi ngày (hiện tạm 500 USD / 2.000 USD trên vốn
    100.000 USD).
-4. Có làm giao diện web ở mục 9.2 không, hay chỉ dùng CLI ở mục 9.1.
+4. Giao diện web ở mục 9.2 đã code ở v1.3; CLI ở mục 9.1 vẫn giữ nguyên.

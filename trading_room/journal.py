@@ -34,7 +34,7 @@ def save_session(output_dir: Path, snapshot: MarketSnapshot, views: list[AgentVi
         "units": "USD only for entry/stop_loss/take_profit, no pips",
         "chief": {"direction": chief.direction, "confidence": chief.confidence,
                   "entry_usd": chief.entry, "stop_loss_usd": chief.stop_loss, "take_profit_usd": chief.take_profit},
-        "risk": {"allowed": risk.allowed, "reason": risk.reason, "lot": risk.lot},
+        "risk": {"allowed": risk.allowed, "reason": risk.reason, "lot": risk.lot, "checks": risk.checks},
         "order": order_message,
     }
     path = output_dir / f"session_{stamp}.json"

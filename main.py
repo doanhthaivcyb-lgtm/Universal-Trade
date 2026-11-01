@@ -12,6 +12,13 @@ Chạy thử không cần MT5, dùng file JSON mẫu, không tốn phí API, kh�
 
 Chạy với key AI thật trong .env (vẫn mặc định dry_run trong config.yaml):
     python main.py
+
+Mở app desktop (bấm đúp run_app.bat cũng mở app này, không cần trình duyệt):
+    python main.py --app
+
+Mở giao diện web local thay cho gõ lệnh (chỉ nghe trên máy local):
+    python main.py --web
+    # rồi mở http://127.0.0.1:8000 trong trình duyệt
 """
 from __future__ import annotations
 
@@ -64,8 +71,22 @@ def main() -> int:
                         help="Chỉ dùng khi --source json.")
     parser.add_argument("--mock", action="store_true", help="Dùng AI giả, không gọi API thật")
     parser.add_argument("--loop", action="store_true", help="Chạy lặp lại theo loop_interval_seconds")
+    parser.add_argument("--app", action="store_true", help="Mở app desktop (Tkinter) thay cho dòng lệnh")
+    parser.add_argument("--web", action="store_true", help="Mở giao diện web local thay cho dòng lệnh")
+    parser.add_argument("--port", type=int, default=8000, help="Cổng giao diện web, mặc định 8000")
     parser.add_argument("--output-dir", default="output")
     args = parser.parse_args()
+
+    if args.app:
+        from trading_room.desktop_app import main as app_main
+
+        return app_main(["--config", args.config, "--output-dir", args.output_dir])
+
+    if args.web:
+        from trading_room.web_ui import run_server
+
+        run_server(args.config, host="127.0.0.1", port=args.port, output_dir=args.output_dir)
+        return 0
 
     cfg = load_config(args.config)
     source = args.source or cfg.data_source

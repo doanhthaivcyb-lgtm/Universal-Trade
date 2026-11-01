@@ -19,6 +19,18 @@ Mô tả chính xác cách vận hành, giao diện demo và các chức năng c
 
 Mọi entry, stop loss, take profit đều tính bằng USD/oz, không dùng pips.
 
+## App desktop (cách dùng dễ nhất: bấm đúp là mở)
+
+Bấm đúp file `run_app.bat` trong thư mục dự án. App mở thành 1 cửa sổ hiện đầy đủ dữ liệu MT5, tin tức, sentiment, danh mục, từng AI đang làm gì ở từng bước, nút xem cách mỗi AI làm việc, kết luận trưởng phòng, 10 kiểm tra cửa rủi ro, lịch sử phiên và cấu hình an toàn. Muốn có biểu tượng trên màn hình desktop: bấm chuột phải vào `run_app.bat` > Send to > Desktop (create shortcut). Lệnh tương đương: `py -3.13 main.py --app`. Chi tiết xem [MO_TA_VAN_HANH.md](MO_TA_VAN_HANH.md) mục 9.3.
+
+## Giao diện web local (dễ dùng hơn dòng lệnh)
+
+```bash
+py -3.13 main.py --web
+```
+
+Rồi mở http://127.0.0.1:8000 trong trình duyệt: bấm nút chạy 1 phiên, xem giá và chỉ báo MT5, xem thảo luận và cửa rủi ro, xem lịch sử phiên, sửa giới hạn rủi ro, bấm dừng khẩn cấp. Chỉ chạy trên máy local, không hiện giá trị key, không cho bật live trên web. Chi tiết xem [MO_TA_VAN_HANH.md](MO_TA_VAN_HANH.md) mục 9.2.
+
 ## An toàn mặc định
 
 - Chế độ mặc định là `dry_run`: chỉ ghi nhật ký, không đặt lệnh thật.
